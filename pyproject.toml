@@ -1,0 +1,26 @@
+[project]
+name = "hestodb"
+version = "0.1.0"
+description = "Extract tables from PowerPoint slides into CSV files"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "pypdf>=6.9.1",
+    "python-pptx",
+    "psycopg[binary]>=3.2.0",
+    "sqlalchemy>=2.0.0",
+    "pywin32>=311",
+]
+
+[tool.uv]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0.1",
+    "pytest>=9.0.2",
+]
+notebook = [
+    "ipykernel>=6.29.5",
+    "jupyterlab>=4.2.5",
+]
