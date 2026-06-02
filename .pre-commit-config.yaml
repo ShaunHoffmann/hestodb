@@ -1,0 +1,29 @@
+exclude: '.git|.tox'
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.12.4
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-ast
+      - id: check-case-conflict
+      - id: trailing-whitespace
+        exclude: ".*(.fits|.fts|.fit|.txt|.mca|.json)$"
+      - id: check-yaml
+      - id: debug-statements
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+        exclude: ^hestodb/data/test/HESTO-202612_Report_24-HTIDS24_Smith-rev3\.pptx$
+#      - id: end-of-file-fixer uncommenting this will break the testing of the cookiecutter template
+#        exclude: ".*(.fits|.fts|.fit|.txt|tca.*)$"
+      - id: mixed-line-ending
+        exclude: ".*(.fits|.fts|.fit|.txt|tca.*|.mca|.json)$"

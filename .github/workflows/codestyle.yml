@@ -1,0 +1,14 @@
+name: Ruff Codestyle
+
+on: [push, pull_request]
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - name: Run ruff hooks from pre-commit config
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: ruff-check ruff-format --all-files --show-diff-on-failure

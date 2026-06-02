@@ -1,0 +1,86 @@
+from pathlib import Path
+import pandas as pd
+from datetime import datetime
+
+
+def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
+    """
+    Find all .pptx files matching the structure:
+        <root>/<year>/<project>/Triannual*/<file>.pptx
+    Skips temporary Office lock files (~ prefix).
+    When multiple files exist in the same Triannual folder, only the most
+    recently modified one is kept.
+
+    Returns a DataFrame indexed by filename with columns:
+        - file_path: Path to the selected .pptx file
+        - project_id: parsed project identifier from folder structure
+        - principal_investigator: parsed PI name from folder structure
+        - modified_ts: last-modified timestamp (Unix seconds)
+        - modified: last-modified datetime (local time)
+        - folder: parent folder used for grouping
+    """
+    if isinstance(root_dir, str):
+        root_dir = Path(root_dir)
+
+    all_files = [
+        p
+        for p in root_dir.glob("*/*/Reports/HESTO/*.pptx")
+        if not p.name.startswith("~$")
+    ]
+
+    # Group by parent folder, keep the newest file in each
+    folders: dict = {}
+    for p in all_files:
+        key = p.parent
+        if key not in folders or p.stat().st_mtime > folders[key].stat().st_mtime:
+            folders[key] = p
+
+    rows = []
+    for p in sorted(folders.values(), key=lambda this_p: this_p.name.lower()):
+        metadata = parse_file_path(p)
+        modified_ts = p.stat().st_mtime
+        rows.append(
+            {
+                "filename": p.name,
+                "file_path": p,
+                "project_id": metadata["project_id"],
+                "year": metadata["year"],
+                "principal_investigator": metadata["principal_investigator"],
+                "modified": datetime.fromtimestamp(modified_ts),
+                "folder": p.parent,
+            }
+        )
+
+    if not rows:
+        empty_df = pd.DataFrame(
+            columns=[
+                "filename",
+                "file_path",
+                "project_id",
+                "principal_investigator",
+                "year",
+                "modified",
+                "folder",
+            ]
+        )
+        return empty_df.set_index("filename")
+
+    return pd.DataFrame(rows).set_index("filename").sort_values("year", ascending=False)
+
+
+def parse_file_path(file_path: Path | str) -> dict:
+    """Parse a report path to extract metadata like year, project, and filename."""
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
+    parts = file_path.parts
+    project_str = parts[-4]
+    project_id = project_str[0:15]
+    project_pi = project_str[16:].lstrip()
+    if len(parts) < 4:
+        raise ValueError(f"Unexpected file path structure: {file_path}")
+    return {
+        "year": int(parts[-5][0:2]) + 2000,
+        "project_id": project_id,
+        "principal_investigator": project_pi,
+        "filename": parts[-1],
+    }

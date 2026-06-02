@@ -1,0 +1,222 @@
+erDiagram
+    admin_people {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT first_name
+        TEXT last_name
+        CITEXT email
+    }
+    awards {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT created_by_id
+        BIGINT edited_by_id
+        TIMESTAMP edited_at
+        TEXT name
+        TEXT abstract
+        TEXT funding_source
+        TEXT solicitation_id
+        AWARD_ID award_id
+        BIGINT pi_id
+        BIGINT technology_id
+        NUMERIC total_award
+        RESEARCH_REGIME research_regime
+        AWARD_TYPE award_type
+        TEXT project_id
+    }
+    emerging_technology_category_lookup {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name
+    }
+    hesto_taxonomy_lookup {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name
+    }
+    institutions {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name_long
+        TEXT name_short
+        INSTITUTION_CATEGORY category
+        VARCHAR country
+        TEXT address_zip
+    }
+    mission {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT created_by_id
+        BIGINT edited_by_id
+        TIMESTAMP edited_at
+        TEXT name_long
+        TEXT name_short
+        TEXT abstract
+        AWARD_ID award_id
+        TEXT short_description
+        BIGINT science_discipline_id
+        BIGINT science_region_id
+        BIGINT hesto_taxonomy_id
+        SPACEFLIGHT_DESTINATION spaceflight_destination
+        SPACEFLIGHT_PLATFORM spaceflight_platform
+        TEXT selection_letter_url
+        BIGINT pi_id
+        DATE launch_date
+    }
+    patents {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT report_id
+        TEXT patent_id
+        TEXT title
+        TEXT abstract
+        TEXT application_number
+        TEXT inventors
+        TEXT assignee
+        DATE filing_date
+        DATE date_issued
+        VARCHAR jurisdiction
+        TEXT patent_url
+        TEXT status
+    }
+    people {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT first_name
+        TEXT last_name
+        CITEXT email
+        BIGINT institution_id
+    }
+    publications {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT report_id
+        PUBLICATION_TYPE publication_type
+        TEXT title
+        DATE publication_date
+        TEXT citation
+        TEXT url
+    }
+    reports {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT award_id
+        TEXT filename
+        TEXT file_path
+        TEXT source_folder
+        INTEGER report_year
+        TIMESTAMP source_modified_at
+        TIMESTAMP extracted_at
+        INTEGER slide_count
+        TEXT source_sha256
+    }
+    science_discipline_lookup {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name
+    }
+    science_region_lookup {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name
+    }
+    teams {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT people_id
+        BIGINT award_id
+        TEAM_ROLE role
+    }
+    technology {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT created_by_id
+        BIGINT edited_by_id
+        TIMESTAMP edited_at
+        TEXT name_long
+        TEXT name_short
+        TEXT overview
+        TEXT principle_of_operations
+        TEXT advantages_and_disadvantages
+        TEXT relevance_to_science
+        TEXT relevance_to_agency
+        TEXT relevance_to_country
+        BIGINT mission_id
+        TRL_LEVEL trl_current
+        NUMERIC size_length
+        NUMERIC size_width
+        NUMERIC size_height
+        NUMERIC volume
+        NUMERIC power_average
+        NUMERIC power_peak
+        NUMERIC data_rate_average
+        NUMERIC data_rate_peak
+        NUMERIC mass
+        TEXT pointing_requirements
+        TEXT port_power
+        TEXT port_communication
+        NUMERIC power_voltage
+        TEXT protocol_communication
+        TEXT special_power_considerations
+        BOOLEAN requires_thermal_isolation
+    }
+    technology_category {
+        BIGINT id
+        TIMESTAMP created_at
+        TEXT name
+    }
+    technology_category_map {
+        BIGINT technology_id
+        BIGINT category_id
+        TIMESTAMP created_at
+    }
+    technology_emerging_technology_map {
+        BIGINT technology_id
+        BIGINT category_id
+        TIMESTAMP created_at
+    }
+    technology_trl {
+        BIGINT id
+        TIMESTAMP created_at
+        BIGINT technology_id
+        BIGINT report_id
+        TRL_LEVEL trl_value
+        DATE trl_date
+        TEXT note
+        TEXT justification
+    }
+    us_state_lookup {
+        VARCHAR state_code
+        TEXT state_name
+        TIMESTAMP created_at
+    }
+    zip_state_lookup {
+        TEXT zip_code
+        VARCHAR state_code
+        TIMESTAMP created_at
+    }
+    institutions ||--o{ people : institution_id
+    science_discipline_lookup ||--o{ mission : science_discipline_id
+    science_region_lookup ||--o{ mission : science_region_id
+    hesto_taxonomy_lookup ||--o{ mission : hesto_taxonomy_id
+    people ||--o{ mission : pi_id
+    admin_people ||--o{ mission : created_by_id
+    admin_people ||--o{ mission : edited_by_id
+    us_state_lookup ||--o{ zip_state_lookup : state_code
+    admin_people ||--o{ technology : created_by_id
+    admin_people ||--o{ technology : edited_by_id
+    mission ||--o{ technology : mission_id
+    people ||--o{ awards : pi_id
+    technology ||--o{ awards : technology_id
+    admin_people ||--o{ awards : created_by_id
+    admin_people ||--o{ awards : edited_by_id
+    technology ||--o{ technology_category_map : technology_id
+    technology_category ||--o{ technology_category_map : category_id
+    technology ||--o{ technology_emerging_technology_map : technology_id
+    emerging_technology_category_lookup ||--o{ technology_emerging_technology_map : category_id
+    technology ||--o{ technology_trl : technology_id
+    awards ||--o{ reports : award_id
+    reports ||--o{ publications : report_id
+    reports ||--o{ patents : report_id
+    people ||--o{ teams : people_id
+    awards ||--o{ teams : award_id
