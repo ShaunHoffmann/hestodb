@@ -25,6 +25,11 @@ PUBLICATION_TYPES = [
     "Web article",
 ]
 
+def extract_report_date(filename: str) -> str:
+    """Return the report date (YYYYMM) extracted from *filename*, or empty string if not found."""
+    _REPORT_DATE_RE = re.compile(r"\d{6}")
+    match = _REPORT_DATE_RE.search(filename)
+    return match.group(0) if match else ""
 
 def extract_project_id(filename: str) -> str:
     """Return the first project-ID token found in *filename*, or empty string."""
