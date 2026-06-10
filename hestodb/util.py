@@ -1,6 +1,7 @@
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
+from hestodb.report import extract_report_date
 
 
 def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
@@ -44,6 +45,7 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "filename": p.name,
                 "file_path": p,
                 "project_id": metadata["project_id"],
+                "report_date": metadata["report_date"],
                 "year": metadata["year"],
                 "principal_investigator": metadata["principal_investigator"],
                 "modified": datetime.fromtimestamp(modified_ts),
@@ -57,6 +59,7 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "filename",
                 "file_path",
                 "project_id",
+                "report_date",
                 "principal_investigator",
                 "year",
                 "modified",
@@ -74,13 +77,15 @@ def parse_file_path(file_path: Path | str) -> dict:
         file_path = Path(file_path)
     parts = file_path.parts
     project_str = parts[-4]
-    project_id = project_str[0:15]
-    project_pi = project_str[16:].lstrip()
+    project_id, project_pi = project_str.split(" ", 1)
+    #project_id = project_str[0:15]
+    #project_pi = project_str[16:].lstrip()
     if len(parts) < 4:
         raise ValueError(f"Unexpected file path structure: {file_path}")
     return {
         "year": int(parts[-5][0:2]) + 2000,
         "project_id": project_id,
+        "report_date": extract_report_date(file_path.name),
         "principal_investigator": project_pi,
         "filename": parts[-1],
     }
