@@ -52,6 +52,7 @@ def test_find_latest_report_pptx_returns_empty_dataframe_when_no_matches(tmp_pat
         "year",
         "modified",
         "folder",
+        "is_active",
     ]
 
 
@@ -90,6 +91,7 @@ def test_find_latest_report_pptx_selects_newest_file_per_folder_and_skips_lock_f
     assert result.loc[newer.name, "principal_investigator"] == "Jane Smith"
     assert result.loc[newer.name, "year"] == 2024
     assert result.loc[newer.name, "folder"] == newer.parent
+    assert result.loc[newer.name, "is_active"] == "No"
     assert older.name not in result.index
 
 

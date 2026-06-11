@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
-from hestodb.report import extract_report_date
+from hestodb.report import extract_report_date, format_report_date
 
 
 def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
@@ -38,8 +38,6 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
         if key not in folders or report_date > report_dates[key]:
             folders[key] = p
             report_dates[key] = report_date
-    
-    
 
     rows = []
     for p in sorted(folders.values(), key=lambda this_p: this_p.name.lower()):
@@ -50,11 +48,12 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "filename": p.name,
                 "file_path": p,
                 "project_id": metadata["project_id"],
-                "report_date": metadata["report_date"],
+                "report_date": format_report_date(metadata["report_date"]),
                 "year": metadata["year"],
                 "principal_investigator": metadata["principal_investigator"],
                 "modified": datetime.fromtimestamp(modified_ts),
                 "folder": p.parent,
+                "is_active": "Yes" if metadata["report_date"] and int(metadata["report_date"]) >= 202511 else "No"
             }
         )
 
@@ -69,6 +68,7 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "year",
                 "modified",
                 "folder",
+                "is_active",
             ]
         )
         return empty_df.set_index("filename")
