@@ -31,10 +31,15 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
 
     # Group by parent folder, keep the newest file in each
     folders: dict = {}
+    report_dates: dict = {}
     for p in all_files:
+        report_date = extract_report_date(p.name)
         key = p.parent
-        if key not in folders or p.stat().st_mtime > folders[key].stat().st_mtime:
+        if key not in folders or report_date > report_dates[key]:
             folders[key] = p
+            report_dates[key] = report_date
+    
+    
 
     rows = []
     for p in sorted(folders.values(), key=lambda this_p: this_p.name.lower()):
@@ -77,7 +82,7 @@ def parse_file_path(file_path: Path | str) -> dict:
         file_path = Path(file_path)
     parts = file_path.parts
     project_str = parts[-4]
-    project_id, project_pi = project_str.split(" ", 1)
+    project_id, project_pi = project_str.split(maxsplit=1)
     #project_id = project_str[0:15]
     #project_pi = project_str[16:].lstrip()
     if len(parts) < 4:

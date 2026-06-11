@@ -47,6 +47,7 @@ def test_find_latest_report_pptx_returns_empty_dataframe_when_no_matches(tmp_pat
     assert list(result.columns) == [
         "file_path",
         "project_id",
+        "report_date",
         "principal_investigator",
         "year",
         "modified",
