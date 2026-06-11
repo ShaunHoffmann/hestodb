@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from pptx import Presentation
+from datetime import datetime
 import csv
 import re
 import logging
@@ -30,6 +31,18 @@ def extract_report_date(filename: str) -> str:
     _REPORT_DATE_RE = re.compile(r"\d{6}")
     match = _REPORT_DATE_RE.search(filename)
     return match.group(0) if match else ""
+
+def format_report_date(report_date: str) -> str:
+    """Format a report date string (YYYYMM) as a more human-friendly string like 'Nov 2025'."""
+    if len(report_date) != 6 or not report_date.isdigit():
+        return report_date
+    year = report_date[:4]
+    month = report_date[4:]
+    try:
+        month_name = datetime.strptime(month, "%m").strftime("%b")
+        return f"{month_name} {year}"
+    except ValueError:
+        return report_date
 
 def extract_project_id(filename: str) -> str:
     """Return the first project-ID token found in *filename*, or empty string."""
