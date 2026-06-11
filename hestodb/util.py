@@ -34,10 +34,13 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
     report_dates: dict = {}
     for p in all_files:
         report_date = extract_report_date(p.name)
-        key = p.parent
-        if key not in folders or report_date > report_dates[key]:
-            folders[key] = p
-            report_dates[key] = report_date
+        if report_date is None:
+            continue
+        if report_date >= 202604:
+            key = p.parent
+            if key not in folders or report_date > report_dates[key]:
+                folders[key] = p
+                report_dates[key] = report_date
 
     rows = []
     for p in sorted(folders.values(), key=lambda this_p: this_p.name.lower()):
@@ -48,7 +51,7 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "filename": p.name,
                 "file_path": p,
                 "project_id": metadata["project_id"],
-                "report_date": format_report_date(metadata["report_date"]),
+                "report_date": format_report_date(str(metadata["report_date"])) if metadata["report_date"] else "",
                 "year": metadata["year"],
                 "principal_investigator": metadata["principal_investigator"],
                 "modified": datetime.fromtimestamp(modified_ts),

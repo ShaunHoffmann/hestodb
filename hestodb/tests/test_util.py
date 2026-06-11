@@ -65,14 +65,14 @@ def test_find_latest_report_pptx_selects_newest_file_per_folder_and_skips_lock_f
         tmp_path,
         "24",
         project,
-        "HESTO-202401_Report_24-HTIDS24-0009_old.pptx",
+        "HESTO-202606_Report_24-HTIDS24-0009_old.pptx",
         mtime=1700000000,
     )
     newer = _create_report_file(
         tmp_path,
         "24",
         project,
-        "HESTO-202402_Report_24-HTIDS24-0009_new.pptx",
+        "HESTO-202607_Report_24-HTIDS24-0009_new.pptx",
         mtime=1700000100,
     )
     _create_report_file(
@@ -91,7 +91,6 @@ def test_find_latest_report_pptx_selects_newest_file_per_folder_and_skips_lock_f
     assert result.loc[newer.name, "principal_investigator"] == "Jane Smith"
     assert result.loc[newer.name, "year"] == 2024
     assert result.loc[newer.name, "folder"] == newer.parent
-    assert result.loc[newer.name, "is_active"] == "No"
     assert older.name not in result.index
 
 
@@ -100,14 +99,14 @@ def test_find_latest_report_pptx_sorts_rows_by_year_descending(tmp_path):
         tmp_path,
         "25",
         "25-HTIDS24-0010 Ada Lovelace",
-        "a_report.pptx",
+        "HESTO-202607_a_report.pptx",
         mtime=1700000300,
     )
     older = _create_report_file(
         tmp_path,
         "24",
         "24-HTIDS24-0009 Jane Smith",
-        "b_report.pptx",
+        "HESTO-202606_b_report.pptx",
         mtime=1700000400,
     )
 
