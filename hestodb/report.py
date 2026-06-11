@@ -26,23 +26,44 @@ PUBLICATION_TYPES = [
     "Web article",
 ]
 
-def extract_report_date(filename: str) -> str:
+def extract_report_date(filename: str) -> int:
     """Return the report date (YYYYMM) extracted from *filename*, or empty string if not found."""
     _REPORT_DATE_RE = re.compile(r"\d{6}")
     match = _REPORT_DATE_RE.search(filename)
-    return match.group(0) if match else ""
+    return int(match.group(0)) if match else None
 
 def format_report_date(report_date: str) -> str:
-    """Format a report date string (YYYYMM) as a more human-friendly string like 'Nov 2025'."""
-    if len(report_date) != 6 or not report_date.isdigit():
+    """Format a report date to YYYY-MM-DD format.
+    Handles multiple input formats:
+    - YYYYMM (6 digits): "202604" → "2026-04-01"
+    - MM/DD/YYYY: "04/04/2026" → "2026-04-04"
+    - Month DD, YYYY: "April 26, 2026" → "2026-04-26"
+    """
+    if not report_date:
         return report_date
-    year = report_date[:4]
-    month = report_date[4:]
+    
+    report_date = report_date.strip()
+    # Try YYYYMM format (6 digits)
+    if len(report_date) == 6 and report_date.isdigit():
+        try:
+            dt = datetime.strptime(f"{report_date}15", "%Y%m%d")
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    # Try MM/DD/YYYY format
     try:
-        month_name = datetime.strptime(month, "%m").strftime("%b")
-        return f"{month_name} {year}"
+        dt = datetime.strptime(report_date, "%m/%d/%Y")
+        return dt.strftime("%Y-%m-%d")
     except ValueError:
-        return report_date
+        pass
+    # Try "Month DD, YYYY" format (e.g., "April 26, 2026")
+    try:
+        dt = datetime.strptime(report_date, "%B %d, %Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # If none match, return as-is
+    return report_date
 
 def extract_project_id(filename: str) -> str:
     """Return the first project-ID token found in *filename*, or empty string."""
