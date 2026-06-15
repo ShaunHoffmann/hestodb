@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
-from hestodb.report import extract_report_date, format_report_date
+from hestodb.report import extract_report_date, format_report_date, Report
 
 
 def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
@@ -10,15 +10,17 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
         <root>/<year>/<project>/Triannual*/<file>.pptx
     Skips temporary Office lock files (~ prefix).
     When multiple files exist in the same Triannual folder, only the most
-    recently modified one is kept.
+    recently modified one is kept (based on report_date from summary slide).
 
     Returns a DataFrame indexed by filename with columns:
         - file_path: Path to the selected .pptx file
-        - project_id: parsed project identifier from folder structure
-        - principal_investigator: parsed PI name from folder structure
-        - modified_ts: last-modified timestamp (Unix seconds)
+        - project_id: project identifier from Report summary
+        - principal_investigator: PI name from Report summary
+        - report_date: formatted date from summary slide (YYYY-MM-DD)
+        - year: extracted year from folder structure
         - modified: last-modified datetime (local time)
         - folder: parent folder used for grouping
+        - is_active: "Yes" if report_date >= 2025-12-01, "No" otherwise
     """
     if isinstance(root_dir, str):
         root_dir = Path(root_dir)
@@ -29,34 +31,54 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
         if not p.name.startswith("~$")
     ]
 
-    # Group by parent folder, keep the newest file in each
+    # Group by parent folder, keep the newest file in each (based on summary date)
     folders: dict = {}
     report_dates: dict = {}
+    
     for p in all_files:
-        report_date = extract_report_date(p.name)
-        if report_date is None:
-            continue
-        if report_date >= 202604:
+        try:
+            report = Report(p)
+            
+            # Extract and format report date from summary slide
+            raw_date = report.summary.get("date") if report.summary else None
+            if not raw_date:
+                continue
+            
+            formatted_date = format_report_date(raw_date)
+            
+            # Skip if date formatting failed
+            if not formatted_date:
+                continue
+            
             key = p.parent
-            if key not in folders or report_date > report_dates[key]:
-                folders[key] = p
-                report_dates[key] = report_date
+            # Compare dates as strings (YYYY-MM-DD format sorts correctly)
+            if key not in folders or formatted_date > report_dates[key]:
+                folders[key] = report
+                report_dates[key] = formatted_date
+        except Exception as e:
+            # Skip files that fail to load
+            continue
 
     rows = []
-    for p in sorted(folders.values(), key=lambda this_p: this_p.name.lower()):
-        metadata = parse_file_path(p)
-        modified_ts = p.stat().st_mtime
+    for report in sorted(folders.values(), key=lambda r: r.filename.lower()):
+        metadata = parse_file_path(report.file_path)
+        modified_ts = report.file_path.stat().st_mtime
+
+        report_date = report_dates[report.file_path.parent]
+        
         rows.append(
             {
-                "filename": p.name,
-                "file_path": p,
-                "project_id": metadata["project_id"],
-                "report_date": format_report_date(str(metadata["report_date"])) if metadata["report_date"] else "",
+                "filename": report.filename,
+                "file_path": report.file_path,
+                "project_id": report.project_id or metadata["project_id"],
+                "report_date": report_date or metadata["report_date"],
                 "year": metadata["year"],
-                "principal_investigator": metadata["principal_investigator"],
+                "principal_investigator": report.principal_investigator or metadata["principal_investigator"],
+                "affiliation": report.affiliation,
+                "research_regime": report.research_regime,
                 "modified": datetime.fromtimestamp(modified_ts),
-                "folder": p.parent,
-                "is_active": "Yes" if metadata["report_date"] and int(metadata["report_date"]) >= 202511 else "No"
+                "folder": report.file_path.parent,
+                "is_active": "Yes" if report_date >= "2025-12-01" else "No",
             }
         )
 
