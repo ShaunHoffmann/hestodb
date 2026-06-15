@@ -26,7 +26,7 @@ PUBLICATION_TYPES = [
     "Web article",
 ]
 
-def extract_report_date(filename: str) -> int:
+def extract_report_date(filename: str) -> str:
     """Return the report date (YYYYMM) extracted from *filename*, or empty string if not found."""
     _REPORT_DATE_RE = re.compile(r"\d{6}")
     match = _REPORT_DATE_RE.search(filename)
@@ -59,6 +59,36 @@ def format_report_date(report_date: str) -> str:
     # Try "Month DD, YYYY" format (e.g., "April 26, 2026")
     try:
         dt = datetime.strptime(report_date, "%B %d, %Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try "Month YYYY" format (e.g., "April 2026")
+    try:
+        dt = datetime.strptime(f"{report_date}15", "%B %Y%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try "DD Month YYYY" format (e.g., "13 May 2026")
+    try:
+        dt = datetime.strptime(report_date, "%d %B %Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+     # Try "DD-Month-YYYY" format (e.g., "13-May-2026")
+    try:
+        dt = datetime.strptime(report_date, "%d-%B-%Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+     # Try "YYYY/MM/DD" format (e.g., "2026/04/26")
+    try:
+        dt = datetime.strptime(report_date, "%Y/%m/%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try "Mon DD, YYYY" format (e.g., "Apr 29, 2026")
+    try:
+        dt = datetime.strptime(report_date, "%b %d, %Y")
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
@@ -153,6 +183,8 @@ class Report:
     filename: str = field(init=False)
     project_id: str | None = field(init=False, default=None)
     summary: object = field(init=False, default=None)
+    research_regime: str | None = field(init=False, default=None)
+    affiliation: str | None = field(init=False, default=None)
     project_status: pd.DataFrame | None = field(init=False, default=None)
     summary: dict | None = field(init=False, default=None)
     slide_titles: list = field(init=False, default_factory=list)
@@ -213,8 +245,10 @@ class Report:
     def _process_summary(self, summary: dict) -> None:
         """Extract fields from the parsed summary dict and validate values."""
         self.project_id = summary.get("proposal id", None)
-        self.principal_investigator = summary.get("principal investigator", None)
-        regime_value = summary.get("research regime", "") or ""
+        self.principal_investigator = (summary.get("principal investigator", "")).strip()
+        regime_value = summary.get("research regime", "")
+        self.research_regime = regime_value.strip()
+        self.affiliation = (summary.get("affiliation") or "").strip()
         valid = [r for r in RESEARCH_REGIMES if r in regime_value.lower()]
         if not valid:
             logger.warning(
@@ -551,3 +585,4 @@ def get_accomodation_data(reports: list[Report]) -> None:
                     row[k] = r["value"]
             writer.writerow(row)
     print(f"Wrote accommodation table to {csv_path}")
+
