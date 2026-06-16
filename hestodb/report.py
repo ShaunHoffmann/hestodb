@@ -26,11 +26,13 @@ PUBLICATION_TYPES = [
     "Web article",
 ]
 
+
 def extract_report_date(filename: str) -> str:
     """Return the report date (YYYYMM) extracted from *filename*, or empty string if not found."""
     _REPORT_DATE_RE = re.compile(r"\d{6}")
     match = _REPORT_DATE_RE.search(filename)
     return int(match.group(0)) if match else None
+
 
 def format_report_date(report_date: str) -> str:
     """Format a report date to YYYY-MM-DD format.
@@ -41,7 +43,7 @@ def format_report_date(report_date: str) -> str:
     """
     if not report_date:
         return report_date
-    
+
     report_date = report_date.strip()
     # Try YYYYMM format (6 digits)
     if len(report_date) == 6 and report_date.isdigit():
@@ -74,13 +76,13 @@ def format_report_date(report_date: str) -> str:
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
-     # Try "DD-Month-YYYY" format (e.g., "13-May-2026")
+    # Try "DD-Month-YYYY" format (e.g., "13-May-2026")
     try:
         dt = datetime.strptime(report_date, "%d-%B-%Y")
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
-     # Try "YYYY/MM/DD" format (e.g., "2026/04/26")
+    # Try "YYYY/MM/DD" format (e.g., "2026/04/26")
     try:
         dt = datetime.strptime(report_date, "%Y/%m/%d")
         return dt.strftime("%Y-%m-%d")
@@ -94,6 +96,7 @@ def format_report_date(report_date: str) -> str:
         pass
     # If none match, return as-is
     return report_date
+
 
 def extract_project_id(filename: str) -> str:
     """Return the first project-ID token found in *filename*, or empty string."""
@@ -182,7 +185,7 @@ class Report:
 
     filename: str = field(init=False)
     project_id: str | None = field(init=False, default=None)
-    summary: object = field(init=False, default=None)
+    # summary: object = field(init=False, default=None)
     research_regime: str | None = field(init=False, default=None)
     affiliation: str | None = field(init=False, default=None)
     project_status: pd.DataFrame | None = field(init=False, default=None)
@@ -245,10 +248,20 @@ class Report:
     def _process_summary(self, summary: dict) -> None:
         """Extract fields from the parsed summary dict and validate values."""
         self.project_id = summary.get("proposal id", None)
-        self.principal_investigator = (summary.get("principal investigator", "")).strip()
+        self.principal_investigator = (
+            (summary.get("principal investigator", "") or "")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .strip()
+        )
         regime_value = summary.get("research regime", "")
         self.research_regime = regime_value.strip()
-        self.affiliation = (summary.get("affiliation") or "").strip()
+        self.affiliation = (
+            (summary.get("affiliation", "") or "")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .strip()
+        )
         valid = [r for r in RESEARCH_REGIMES if r in regime_value.lower()]
         if not valid:
             logger.warning(
@@ -408,7 +421,12 @@ class Report:
                 if len(row) <= max(cat_idx, val_idx):
                     continue
                 category = row[cat_idx].lower()
-                raw_value = row[val_idx] if len(row) > val_idx else ""
+                raw_value = (
+                    (row[val_idx] if len(row) > val_idx else "")
+                    .replace("\n", " ")
+                    .replace("\r", " ")
+                    .strip()
+                )
                 spec = (
                     row[spec_idx].strip()
                     if spec_idx is not None and len(row) > spec_idx
@@ -586,3 +604,14 @@ def get_accomodation_data(reports: list[Report]) -> None:
             writer.writerow(row)
     print(f"Wrote accommodation table to {csv_path}")
 
+
+def get_accom_value(df, category, subcat=""):
+    if df is None or df.empty:
+        return None
+    match = df[
+        (df["category"].str.lower() == category.lower())
+        & (df["sub_category"].str.lower() == subcat.lower())
+    ]
+    if match.empty:
+        return None
+    return match["value"].iloc[0]
