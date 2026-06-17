@@ -110,7 +110,7 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
             folders[folder] = report
             folder_dates[folder] = chosen_date
 
-    # NOTE (perf): each kept file is fully parsed into a Report above, but only
+    # Note (perf): each kept file is fully parsed into a Report above, but only
     # its extracted fields are written into the DataFrame below -- the Report
     # objects themselves are discarded. The notebook then re-parses the selected
     # files (`reports = [Report(p) for p in files["file_path"]]`), so those files
