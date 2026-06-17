@@ -75,10 +75,11 @@ COLUMN_GROUPS = {
         "affiliation",
         "research_regime",
     ],
+    "trl_status": ["trl_input", "trl_current", "trl_planned_exit"],
     "accommodations": list(ACCOMMODATION_FIELDS),
     "publications": ["n_publications", "publications_detail"],
     "patents": ["n_patents", "patents_detail"],
-    "project_status": STATUS_PIVOT_COLS,
+    "project_status": ["performance_period", *STATUS_PIVOT_COLS],
     "student_metrics": ["n_students", "students_detail"],
 }
 
@@ -86,6 +87,7 @@ COLUMN_GROUPS = {
 GROUP_ORDER = [
     "metadata",
     "summary",
+    "trl_status",
     "accommodations",
     "publications",
     "patents",
@@ -204,8 +206,15 @@ def build_master_table(reports, files, out_path="master_table.csv"):
         row["publications_detail"] = _detail_string(pub, len(PUBLICATION_COLS))
         row["patents_detail"] = _detail_string(pat, len(PATENT_COLS))
         row["students_detail"] = _detail_string(stu, len(STUDENT_COLS))
+        row["performance_period"] = rep.performance_period  # from Project Summary
 
         row.update(accommodation_fields(rep))  # accommodations slide -> columns
+
+        trl = rep.trl_status_table  # single-row TRL status table -> columns
+        if trl is not None and not trl.empty:
+            row["trl_input"] = trl["input"].iloc[0]
+            row["trl_current"] = trl["current"].iloc[0]
+            row["trl_planned_exit"] = trl["planned_exit"].iloc[0]
 
         st = rep.project_status
         if st is not None and not st.empty:

@@ -237,3 +237,21 @@ def test_report_project_status_overall_yellow():
     df = report.project_status
     current = df[df["category"] == "overall"]["current"].iloc[0]
     assert current == "y"
+
+
+def test_report_trl_status_table():
+    report = Report(test_report_file)
+    df = report.trl_status_table
+    assert isinstance(df, pd.DataFrame)
+    assert list(df.columns) == ["input", "current", "planned_exit"]
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["input"] == "4"
+    assert row["current"] == "5"
+    assert row["planned_exit"] == "6"
+
+
+def test_report_performance_period():
+    report = Report(test_report_file)
+    # 2x6 metadata table on the Project Summary slide, cell (0, 5)
+    assert report.performance_period == "MM/DD/YY – MM/DD/YY"

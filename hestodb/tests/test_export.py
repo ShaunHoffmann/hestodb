@@ -26,12 +26,16 @@ class FakeReport:
         student_metrics_table=None,
         project_status=None,
         accomodation_table=None,
+        trl_status_table=None,
+        performance_period="",
     ):
         self.publication_table = publication_table
         self.patents_table = patents_table
         self.student_metrics_table = student_metrics_table
         self.project_status = project_status
         self.accomodation_table = accomodation_table
+        self.trl_status_table = trl_status_table
+        self.performance_period = performance_period
 
 
 def _verbose_publication_df(rows):
@@ -56,6 +60,11 @@ def test_group_for_maps_known_columns():
     assert group_for("overall_prior") == "project_status"
     assert group_for("n_patents") == "patents"
     assert group_for("students_detail") == "student_metrics"
+    assert group_for("trl_input") == "trl_status"
+    assert group_for("trl_current") == "trl_status"
+    assert group_for("trl_planned_exit") == "trl_status"
+    # performance_period rolls up under the project_status header
+    assert group_for("performance_period") == "project_status"
 
 
 def test_group_for_unknown_column_is_metadata():
@@ -225,6 +234,26 @@ def test_build_master_table_one_row_per_active_report(tmp_path):
     assert row["overall_current"] == "y"
     assert row["overall_rationale"] == "r1"
     assert "index" not in master.columns
+
+
+def test_build_master_table_pulls_trl_and_performance_period(tmp_path):
+    files = _make_files()
+    trl = pd.DataFrame(
+        [{"input": "4", "current": "5", "planned_exit": "6"}],
+        columns=["input", "current", "planned_exit"],
+    )
+    reports = [
+        FakeReport(trl_status_table=trl, performance_period="01/01/26 - 12/31/26"),
+        FakeReport(),  # inactive
+    ]
+
+    master = build_master_table(reports, files, tmp_path / "m.csv")
+
+    row = master.iloc[0]
+    assert row["trl_input"] == "4"
+    assert row["trl_current"] == "5"
+    assert row["trl_planned_exit"] == "6"
+    assert row["performance_period"] == "01/01/26 - 12/31/26"
 
 
 def test_build_master_table_columns_grouped_contiguously_in_order(tmp_path):
