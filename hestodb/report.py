@@ -201,6 +201,8 @@ class Report:
     publication_table: pd.DataFrame | None = field(init=False, default=None)
     patents_table: pd.DataFrame | None = field(init=False, default=None)
     student_metrics_table: pd.DataFrame | None = field(init=False, default=None)
+    trl_status_table: pd.DataFrame | None = field(init=False, default=None)
+    performance_period: str = field(init=False, default="")
 
     def __post_init__(self):
         # Ensure file_path is a Path object and check existence
@@ -223,13 +225,34 @@ class Report:
             if "Payload Accommodation".lower() in this_slide_title:
                 self.accomodation_table = self.parse_accomodation_slide(this_slide)
             if "presentations" in this_slide_title:
-                self.publication_table = self.parse_publications_slide(this_slide)
+                new_df = self.parse_publications_slide(this_slide)
+                if new_df is not None and not new_df.empty:
+                    if self.publication_table is None:
+                        self.publication_table = new_df
+                    else:
+                        self.publication_table = pd.concat(
+                            [self.publication_table, new_df], ignore_index=True
+                        )
             if "patents" in this_slide_title:
-                self.patents_table = self.parse_patents_slide(this_slide)
-            if "student metrics and support" in this_slide_title:
-                self.student_metrics_table = self.parse_student_metrics_slide(
-                    this_slide
-                )
+                new_df = self.parse_patents_slide(this_slide)
+                if new_df is not None and not new_df.empty:
+                    if self.patents_table is None:
+                        self.patents_table = new_df
+                    else:
+                        self.patents_table = pd.concat(
+                            [self.patents_table, new_df], ignore_index=True
+                        )
+            if "student metrics" in this_slide_title:
+                new_df = self.parse_student_metrics_slide(this_slide)
+                if new_df is not None and not new_df.empty:
+                    if self.student_metrics_table is None:
+                        self.student_metrics_table = new_df
+                    else:
+                        self.student_metrics_table = pd.concat(
+                            [self.student_metrics_table, new_df], ignore_index=True
+                        )
+            if "trl" in this_slide_title:
+                self.trl_status_table = self.parse_trl_status_slide(this_slide)
             if "Project Summary".lower() in this_slide_title:
                 self.project_status = self.parse_status_slide(this_slide)
 
@@ -287,6 +310,42 @@ class Report:
             return df
         return None
 
+    def parse_trl_status_slide(self, slide) -> pd.DataFrame | None:
+        """Extract the TRL status table as a single-row DataFrame.
+
+        Maps by label lookup in column 0 (not by row index):
+        ``input`` <- "TRL Coming In", ``current`` <- "Current TRL",
+        ``planned_exit`` <- "Planned Exit TRL". A missing label stores None for
+        that field. Returns None (and logs a warning) if the slide has no table.
+        """
+        for shape in slide.shapes:
+            if not shape.has_table:
+                continue
+
+            parsed_rows = parse_table(shape.table)
+            if not parsed_rows:
+                continue
+
+            # label (col 0, lowercased) -> value (col 1)
+            lookup = {
+                row[0].strip().lower(): row[1].strip()
+                for row in parsed_rows
+                if len(row) >= 2
+            }
+            return pd.DataFrame(
+                [
+                    {
+                        "input": lookup.get("trl coming in"),
+                        "current": lookup.get("current trl"),
+                        "planned_exit": lookup.get("planned exit trl"),
+                    }
+                ],
+                columns=["input", "current", "planned_exit"],
+            )
+
+        logger.warning("%s: no table found on TRL status slide.", self.filename)
+        return None
+
     def parse_summary_slide(self, slide) -> dict:
         """Extract data from the project info slide"""
         for shape in slide.shapes:
@@ -323,7 +382,12 @@ class Report:
         for shape in slide.shapes:
             if not shape.has_table:
                 continue
-            parsed_rows = parse_table(shape.table)
+            table = shape.table
+            # The 2x6 metadata table holds the performance period in cell (0, 5).
+            # The 2x4 "Overall" status table also has 2 rows, so require 6 cols.
+            if len(table.rows) == 2 and len(table.columns) == 6:
+                self.performance_period = _clean_cell(table.cell(0, 5).text)
+            parsed_rows = parse_table(table)
             if not parsed_rows:
                 continue
             for row in parsed_rows:
