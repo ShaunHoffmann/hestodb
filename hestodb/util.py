@@ -4,7 +4,6 @@ from datetime import datetime
 from hestodb.report import (
     extract_report_date,
     format_report_date,
-    get_accom_value,
     Report,
 )
 
@@ -111,6 +110,13 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
             folders[folder] = report
             folder_dates[folder] = chosen_date
 
+    # NOTE (perf): each kept file is fully parsed into a Report above, but only
+    # its extracted fields are written into the DataFrame below -- the Report
+    # objects themselves are discarded. The notebook then re-parses the selected
+    # files (`reports = [Report(p) for p in files["file_path"]]`), so those files
+    # are parsed twice. To remove the double parse, this function could return
+    # the already-built Report objects (e.g. via an optional `_report` column)
+    # for the caller to reuse instead of re-parsing.
     rows = []
     for report in sorted(folders.values(), key=lambda r: r.filename.lower()):
         metadata = parse_file_path(report.file_path)
@@ -129,52 +135,6 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "research_regime": report.research_regime,
                 "modified": datetime.fromtimestamp(modified_ts),
                 "folder": report.file_path.parent,
-                "length": get_accom_value(
-                    report.accomodation_table, "payload size", "length"
-                ),
-                "width": get_accom_value(
-                    report.accomodation_table, "payload size", "width"
-                ),
-                "height": get_accom_value(
-                    report.accomodation_table, "payload size", "height"
-                ),
-                "total_volume": get_accom_value(
-                    report.accomodation_table, "payload volume", ""
-                ),
-                "average_power": get_accom_value(
-                    report.accomodation_table, "power requirements", "average"
-                ),
-                "peak_power": get_accom_value(
-                    report.accomodation_table, "power requirements", "peak"
-                ),
-                "total_mass": get_accom_value(report.accomodation_table, "mass", ""),
-                "attitude_knowledge": get_accom_value(
-                    report.accomodation_table, "pointing requirements", "arcsecs"
-                ),
-                "attitude_control": get_accom_value(
-                    report.accomodation_table, "pointing requirements", "arcminutes"
-                ),
-                "average_data_rate": get_accom_value(
-                    report.accomodation_table, "data rate", "average"
-                ),
-                "peak_data_rate": get_accom_value(
-                    report.accomodation_table, "data rate", "peak"
-                ),
-                "power_interface_port": get_accom_value(
-                    report.accomodation_table, "power interface port", ""
-                ),
-                "communication_interface_protocol": get_accom_value(
-                    report.accomodation_table, "communication interface protocol", ""
-                ),
-                "data_connector_type": get_accom_value(
-                    report.accomodation_table, "data communication port", ""
-                ),
-                "thermal_isolation": get_accom_value(
-                    report.accomodation_table, "requires thermal isolation", ""
-                ),
-                "circuit_protection": get_accom_value(
-                    report.accomodation_table, "special power considerations", ""
-                ),
                 "is_active": "Yes" if report_date >= CUTOFF_DATE else "No",
             }
         )
@@ -186,26 +146,12 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "file_path",
                 "project_id",
                 "report_date",
-                "principal_investigator",
                 "year",
+                "principal_investigator",
+                "affiliation",
+                "research_regime",
                 "modified",
                 "folder",
-                "length",
-                "width",
-                "height",
-                "total_volume",
-                "average_power",
-                "peak_power",
-                "total_mass",
-                "attitude_knowledge",
-                "attitude_control",
-                "average_data_rate",
-                "peak_data_rate",
-                "power_interface_port",
-                "communication_interface_protocol",
-                "data_connector_type",
-                "thermal_isolation",
-                "circuit_protection",
                 "is_active",
             ]
         )
@@ -220,9 +166,9 @@ def parse_file_path(file_path: Path | str) -> dict:
         file_path = Path(file_path)
     parts = file_path.parts
     project_str = parts[-4]
-    project_id, project_pi = project_str.split(maxsplit=1)
-    # project_id = project_str[0:15]
-    # project_pi = project_str[16:].lstrip()
+    parts_split = project_str.split(maxsplit=1)
+    project_id = parts_split[0]
+    project_pi = parts_split[1] if len(parts_split) > 1 else ""
     if len(parts) < 4:
         raise ValueError(f"Unexpected file path structure: {file_path}")
     return {

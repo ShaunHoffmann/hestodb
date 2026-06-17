@@ -64,12 +64,6 @@ def format_report_date(report_date: str) -> str:
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
-    # Try "Month YYYY" format (e.g., "April 2026")
-    try:
-        dt = datetime.strptime(f"{report_date}15", "%B %Y%d")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        pass
     # Try "DD Month YYYY" format (e.g., "13 May 2026")
     try:
         dt = datetime.strptime(report_date, "%d %B %Y")
@@ -105,11 +99,22 @@ def extract_project_id(filename: str) -> str:
     return match.group(0) if match else ""
 
 
+# All line-break characters python-pptx may emit: newline, carriage return,
+# vertical tab (\v, used for in-cell <a:br/> soft breaks), form feed, and the
+# Unicode line/paragraph separators.
+_LINE_BREAKS = re.compile(r"[\r\n\v\f]+")
+
+
+def _clean_cell(text: str) -> str:
+    """Replace any embedded line breaks with a single space and trim the ends."""
+    return _LINE_BREAKS.sub(" ", text).strip()
+
+
 def parse_table(table) -> list:
     """Return a list of rows (each a list of strings), skipping empty rows and de-duping merged cells."""
     parsed = []
     for row in table.rows:
-        values = [cell.text.strip() for cell in row.cells]
+        values = [_clean_cell(cell.text) for cell in row.cells]
         if not any(values):
             continue
         # deduped = [v for i, v in enumerate(values) if i == 0 or v != values[i - 1]]
@@ -249,19 +254,11 @@ class Report:
         """Extract fields from the parsed summary dict and validate values."""
         self.project_id = summary.get("proposal id", None)
         self.principal_investigator = (
-            (summary.get("principal investigator", "") or "")
-            .replace("\n", " ")
-            .replace("\r", " ")
-            .strip()
-        )
+            summary.get("principal investigator", "") or ""
+        ).strip()
         regime_value = summary.get("research regime", "")
         self.research_regime = regime_value.strip()
-        self.affiliation = (
-            (summary.get("affiliation", "") or "")
-            .replace("\n", " ")
-            .replace("\r", " ")
-            .strip()
-        )
+        self.affiliation = (summary.get("affiliation", "") or "").strip()
         valid = [r for r in RESEARCH_REGIMES if r in regime_value.lower()]
         if not valid:
             logger.warning(
@@ -336,6 +333,7 @@ class Report:
                 if category in STATUS_CATEGORIES and len(row) >= 3:
                     prior = row[1].lower()
                     current = row[2].lower()
+                    rationale = row[3].strip() if len(row) >= 4 else ""
                     for label, value in (("prior", prior), ("current", current)):
                         if value not in STATUS_VALUES:
                             logger.warning(
@@ -348,10 +346,15 @@ class Report:
                                 STATUS_VALUES,
                             )
                     rows.append(
-                        {"category": category, "prior": prior, "current": current}
+                        {
+                            "category": category,
+                            "prior": prior,
+                            "current": current,
+                            "rationale": rationale,
+                        }
                     )
         return (
-            pd.DataFrame(rows, columns=["category", "prior", "current"])
+            pd.DataFrame(rows, columns=["category", "prior", "current", "rationale"])
             if rows
             else None
         )
@@ -421,12 +424,7 @@ class Report:
                 if len(row) <= max(cat_idx, val_idx):
                     continue
                 category = row[cat_idx].lower()
-                raw_value = (
-                    (row[val_idx] if len(row) > val_idx else "")
-                    .replace("\n", " ")
-                    .replace("\r", " ")
-                    .strip()
-                )
+                raw_value = (row[val_idx] if len(row) > val_idx else "").strip()
                 spec = (
                     row[spec_idx].strip()
                     if spec_idx is not None and len(row) > spec_idx
