@@ -77,6 +77,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+test.py*.ipynb
 
 # IPython
 profile_default/
@@ -211,4 +212,5 @@ __marimo__/
 uv.lock
 
 ~*.pptx
-test.py*.ipynb
+*.pptx
+!hestodb/data/test/HESTO-202612_Report_24-HTIDS24_Smith-rev3.pptx
