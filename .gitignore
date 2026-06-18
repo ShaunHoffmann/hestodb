@@ -211,4 +211,4 @@ __marimo__/
 uv.lock
 
 ~*.pptx
-test.py
+test.py*.ipynb
