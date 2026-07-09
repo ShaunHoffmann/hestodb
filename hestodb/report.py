@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from pptx import Presentation
-from datetime import datetime
+from datetime import datetime, date
 import csv
 import re
 import logging
@@ -19,8 +19,8 @@ RESEARCH_REGIMES = [
 ]
 STATUS_VALUES = ["g", "y", "r", "green", "yellow", "red"]
 PUBLICATION_TYPES = [
-    "Peer-reviewed publication",
-    "Non-Peer-reviewed publication",
+    "Peer-reviewed journal",
+    "Non-peer-reviewed journal",
     "Conference presentation (oral)",
     "Conference presentation (poster)",
     "Web article",
@@ -52,9 +52,21 @@ def format_report_date(report_date: str) -> str:
             return dt.strftime("%Y-%m-%d")
         except ValueError:
             pass
+    # Try Month YYYY format
+    try:
+        dt = datetime.strptime(f"{report_date}15", "%B %Y%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
     # Try MM/DD/YYYY format
     try:
         dt = datetime.strptime(report_date, "%m/%d/%Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try MM/DD/YY format (2-digit year, e.g. "07/28/25", "1/14/26")
+    try:
+        dt = datetime.strptime(report_date, "%m/%d/%y")
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
@@ -197,12 +209,15 @@ class Report:
     summary: dict | None = field(init=False, default=None)
     slide_titles: list = field(init=False, default_factory=list)
     principal_investigator: str | None = field(init=False, default=None)
+    email: str | None = field(init=False, default=None)
     accomodation_table: pd.DataFrame | None = field(init=False, default=None)
     publication_table: pd.DataFrame | None = field(init=False, default=None)
     patents_table: pd.DataFrame | None = field(init=False, default=None)
     student_metrics_table: pd.DataFrame | None = field(init=False, default=None)
     trl_status_table: pd.DataFrame | None = field(init=False, default=None)
     performance_period: str = field(init=False, default="")
+    performance_period_start: date | None = field(init=False, default=None)
+    performance_period_end: date | None = field(init=False, default=None)
 
     def __post_init__(self):
         # Ensure file_path is a Path object and check existence
@@ -222,7 +237,10 @@ class Report:
                 self.summary = self.parse_summary_slide(this_slide)
                 if isinstance(self.summary, dict):
                     self._process_summary(self.summary)
-            if "Payload Accommodation".lower() in this_slide_title:
+            if (
+                "Payload Accommodation".lower() in this_slide_title
+                and self.accomodation_table is None
+            ):
                 self.accomodation_table = self.parse_accomodation_slide(this_slide)
             if "presentations" in this_slide_title:
                 new_df = self.parse_publications_slide(this_slide)
@@ -279,6 +297,7 @@ class Report:
         self.principal_investigator = (
             summary.get("principal investigator", "") or ""
         ).strip()
+        self.email = (summary.get("pi email", "") or "").strip()
         regime_value = summary.get("research regime", "")
         self.research_regime = regime_value.strip()
         self.affiliation = (summary.get("affiliation", "") or "").strip()
@@ -346,7 +365,8 @@ class Report:
         logger.warning("%s: no table found on TRL status slide.", self.filename)
         return None
 
-    def parse_summary_slide(self, slide) -> dict:
+    @staticmethod
+    def parse_summary_slide(slide) -> dict:
         """Extract data from the project info slide"""
         for shape in slide.shapes:
             if not shape.has_table:
@@ -363,6 +383,27 @@ class Report:
                     result[key] = value
             return result
 
+        return None
+
+    @classmethod
+    def peek_summary(cls, file_path: Path | str) -> dict | None:
+        """Parse ONLY the summary slide's table into a dict, without building a
+        full Report (no accommodation/publications/patents/TRL/status parsing).
+
+        Used by util.py's find_latest_report_pptx for cheap date/metadata-based
+        file ranking before committing to a full parse on the winning file only.
+        Reuses get_slide_title/parse_summary_slide so this lightweight path and
+        the full __post_init__ path stay in sync.
+        """
+        if isinstance(file_path, str):
+            file_path = Path(file_path)
+        prs = Presentation(str(file_path))
+        for slide in prs.slides:
+            if cls.get_slide_title(slide).lower() != "summary":
+                continue
+            summary = cls.parse_summary_slide(slide)
+            if summary is not None:
+                return summary
         return None
 
     def parse_status_slide(self, slide) -> pd.DataFrame | None:
@@ -387,6 +428,9 @@ class Report:
             # The 2x4 "Overall" status table also has 2 rows, so require 6 cols.
             if len(table.rows) == 2 and len(table.columns) == 6:
                 self.performance_period = _clean_cell(table.cell(0, 5).text)
+                self.performance_period_start, self.performance_period_end = (
+                    self._parse_performance_period(self.performance_period)
+                )
             parsed_rows = parse_table(table)
             if not parsed_rows:
                 continue
@@ -423,6 +467,42 @@ class Report:
             else None
         )
 
+    def _parse_performance_period(self, raw: str) -> tuple:
+        """Split a 'start – end' performance period into (start_dt, end_dt).
+
+        Returns (None, None) if *raw* doesn't split into exactly two parts.
+        Each half is parsed independently, so a good half is kept even if the
+        other fails. Never raises (batch-parser rule): bad input is logged and
+        becomes None.
+        """
+        if not raw:
+            return None, None
+        # Normalize em-dash to en-dash, then split on en-dash ONLY. We deliberately
+        # do NOT split on ASCII '-' so an ISO date (YYYY-MM-DD) can't be shredded.
+        normalized = raw.replace("\u2014", "\u2013")
+        parts = [p.strip() for p in normalized.split("\u2013")]
+        if len(parts) != 2:
+            logger.warning(
+                "%s: performance_period %r did not split into two dates; "
+                "leaving start/end None.",
+                self.filename,
+                raw,
+            )
+            return None, None
+
+        def to_dt(half):
+            try:
+                return datetime.strptime(format_report_date(half), "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                logger.warning(
+                    "%s: performance_period could not parse %r; leaving None.",
+                    self.filename,
+                    half,
+                )
+                return None
+
+        return to_dt(parts[0]), to_dt(parts[1])
+
     def parse_publications_slide(self, slide) -> pd.DataFrame | None:
         """Extract the publications table information."""
         for shape in slide.shapes:
@@ -437,7 +517,53 @@ class Report:
             data = parsed_rows[1:]
             if not data:
                 return None
+
+            # Find the title column index (first header containing "title").
+            # Looked up by name so it works regardless of schema/column order.
+            title_idx = next(
+                (i for i, h in enumerate(header) if "title" in h.lower()), None
+            )
+            if title_idx is None:
+                logger.warning(
+                    "%s: no Title column found on publications slide; "
+                    "keeping all rows unfiltered.",
+                    self.filename,
+                )
+            else:
+                filtered = []
+                for row in data:
+                    try:
+                        title = row[title_idx] if len(row) > title_idx else ""
+                        if not title or not title.strip():
+                            continue
+                        filtered.append(row)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "%s: skipping publications row due to error: %s",
+                            self.filename,
+                            exc,
+                        )
+                        continue
+                data = filtered
+                if not data:
+                    return None
+
             df = pd.DataFrame(data, columns=header)
+            # Convert the date column (first header containing "date") to date
+            # objects, coercing unparseable/empty values to NaT.
+            date_col = next((h for h in header if "date" in h.lower()), None)
+            if date_col is not None:
+                normalized = df[date_col].map(format_report_date)
+                parsed = pd.to_datetime(normalized, errors="coerce")
+                failed_mask = parsed.isna() & normalized.astype(str).str.strip().ne("")
+                if failed_mask.any():
+                    for raw_val in normalized[failed_mask]:
+                        logger.warning(
+                            "%s: could not parse publication date %r; leaving blank.",
+                            self.filename,
+                            raw_val,
+                        )
+                df[date_col] = parsed.dt.date
             # Find the type column (first column whose header contains "type")
             type_col = next((c for c in df.columns if "type" in c.lower()), None)
             if type_col is not None:
@@ -570,7 +696,8 @@ class Report:
             )
         return None
 
-    def get_slide_title(self, slide) -> str:
+    @staticmethod
+    def get_slide_title(slide) -> str:
         """Return the title text of a slide, or an empty string if none found."""
         if slide.shapes.title is not None:
             return slide.shapes.title.text or ""
@@ -578,6 +705,20 @@ class Report:
         for shape in slide.placeholders:
             if shape.placeholder_format.idx == 0:
                 return shape.text or ""
+        # Last resort: some slides have no title placeholder at all but carry a
+        # visible title in a plain text box. Use the topmost non-table shape
+        # that has non-empty text.
+        candidates = []
+        for shape in slide.shapes:
+            if shape.has_table or not shape.has_text_frame:
+                continue
+            text = _clean_cell(shape.text_frame.text)
+            if not text:
+                continue
+            top = shape.top if shape.top is not None else float("inf")
+            candidates.append((top, text))
+        if candidates:
+            return min(candidates, key=lambda c: c[0])[1]
         return ""
 
     def __repr__(self):

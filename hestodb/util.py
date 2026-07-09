@@ -1,38 +1,51 @@
 from pathlib import Path
+import json
 import pandas as pd
 from datetime import datetime
-from hestodb.report import (
-    extract_report_date,
-    format_report_date,
-    Report,
-)
+from hestodb.report import extract_report_date, format_report_date, Report
 
-CUTOFF_DATE = datetime(2026, 4, 1)
+CUTOFF_DATE = datetime(2025, 12, 31)
 
 
-def _filename_date_to_dt(raw: int):
-    """Convert YYYYMM integer to a datetime (YYYY-MM-15)."""
-    if not raw:
-        return None
+def _load_cache(cache_path) -> dict:
+    """Load the summary-peek cache. Returns {} when disabled, missing, or corrupt."""
+    if cache_path is None:
+        return {}
     try:
-        s = str(raw)
-        year = int(s[:4])
-        month = int(s[4:6])
-        return datetime(year, month, 15)
-    except (ValueError, TypeError):
-        return None
+        with open(cache_path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
-def _select_final_date(report, filepath):
+def _save_cache(cache_path, cache: dict) -> None:
+    """Atomically write the summary-peek cache, unless caching is disabled."""
+    if cache_path is None:
+        return
+    cache_path = Path(cache_path)
+    tmp = cache_path.with_name(cache_path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(cache, fh)
+    tmp.replace(cache_path)
+
+
+def _select_final_date(summary, filepath):
     """
-    Returns a tuple: (chosen_date, keep_report_boolean)
-    chosen_date = datetime for ranking within folder.
+    Returns a tuple: (chosen_date, rank, keep_report_boolean)
+    chosen_date = datetime written to the report_date column (plain datetime).
+    rank        = (summary_dt, filename_dt, modified_dt) tuple used ONLY to
+                  pick the winner within a folder. Missing dates use
+                  datetime.min so they sort lowest.
     keep_report_boolean = True if report passes cutoff.
+
+    Precedence for "latest" within a folder:
+        1. summary slide date  (latest wins)
+        2. tie -> filename YYYYMM date  (latest wins)
+        3. tie -> file modified time    (latest wins)
     """
     # Summary date
-    summary_raw = report.summary.get("date") if report.summary else None
+    summary_raw = summary.get("date") if summary else None
     summary_dt = None
-
     if summary_raw:
         try:
             formatted = format_report_date(summary_raw)
@@ -42,7 +55,12 @@ def _select_final_date(report, filepath):
 
     # Filename fallback date
     filename_raw = extract_report_date(filepath.name)
-    filename_dt = _filename_date_to_dt(filename_raw)
+    filename_dt = None
+    if filename_raw:
+        try:
+            filename_dt = datetime.strptime(f"{filename_raw}15", "%Y%m%d")
+        except (ValueError, TypeError):
+            filename_dt = None
 
     # --- Filtering ---
     passes_filter = False
@@ -56,20 +74,36 @@ def _select_final_date(report, filepath):
         passes_filter = True
 
     if not passes_filter:
-        return None, False
+        return None, None, False
 
-    # --- Pick chosen date ---
+    # --- Build ranking tuple (final tiebreak) ---
+    # modified_dt is always present, so the tuple comparison is deterministic
+    # even when both date signals tie.
+    modified_dt = datetime.fromtimestamp(filepath.stat().st_mtime)
+    rank = (
+        summary_dt or datetime.min,
+        filename_dt or datetime.min,
+        modified_dt,
+    )
+
+    # --- Pick chosen date (stays a plain datetime for the report_date column) ---
     chosen = summary_dt if summary_dt else filename_dt
-    return chosen, True
+    return chosen, rank, True
 
 
-def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
+def find_latest_report_pptx(
+    root_dir: Path | str, cache_path: Path | str | None = None
+) -> pd.DataFrame:
     """
     Find all .pptx files matching the structure:
         <root>/<year>/<project>/Triannual*/<file>.pptx
     Skips temporary Office lock files (~ prefix).
     When multiple files exist in the same Triannual folder, only the most
     recently modified one is kept (based on report_date from summary slide).
+
+    When *cache_path* is given, each file's summary-slide peek is cached keyed
+    by mtime; unchanged files are not re-opened on subsequent runs. Pass None
+    (default) to disable caching.
 
     Returns a DataFrame indexed by filename with columns:
         - file_path: Path to the selected .pptx file
@@ -90,51 +124,77 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
         if not p.name.startswith("~$")
     ]
 
-    # Group by parent folder, keep the newest file in each (based on summary date)
+    # Group by parent folder, keep the newest file in each. "Newest" is decided
+    # by the rank tuple (summary date -> filename date -> modified time), while
+    # folder_dates stores the plain datetime that goes in the report_date column.
     folders = {}
     folder_dates = {}
+    folder_ranks = {}
+
+    cache = _load_cache(cache_path)
 
     for p in all_files:
-        try:
-            report = Report(p)
-        except Exception:
-            continue
+        key = str(p)
+        mtime_ns = p.stat().st_mtime_ns
+        entry = cache.get(key)
+        if entry is not None and entry["mtime_ns"] == mtime_ns:
+            summary = entry["summary"]  # cache hit: file not opened
+        else:
+            try:
+                summary = Report.peek_summary(p)  # cache miss: open + peek
+            except Exception:
+                continue
+            cache[key] = {"mtime_ns": mtime_ns, "summary": summary}
 
-        chosen_date, keep = _select_final_date(report, p)
+        chosen_date, rank, keep = _select_final_date(summary, p)
         if not keep:
             continue
 
         folder = p.parent
 
-        if folder not in folders or chosen_date > folder_dates[folder]:
-            folders[folder] = report
+        if folder not in folders or rank > folder_ranks[folder]:
+            folders[folder] = (p, summary)
             folder_dates[folder] = chosen_date
+            folder_ranks[folder] = rank
 
-    # Note (perf): each kept file is fully parsed into a Report above, but only
-    # its extracted fields are written into the DataFrame below -- the Report
-    # objects themselves are discarded. The notebook then re-parses the selected
-    # files (`reports = [Report(p) for p in files["file_path"]]`), so those files
-    # are parsed twice. To remove the double parse, this function could return
-    # the already-built Report objects (e.g. via an optional `_report` column)
-    # for the caller to reuse instead of re-parsing.
+    _save_cache(cache_path, cache)
+
     rows = []
-    for report in sorted(folders.values(), key=lambda r: r.filename.lower()):
-        metadata = parse_file_path(report.file_path)
-        modified_ts = report.file_path.stat().st_mtime
-        report_date = folder_dates[report.file_path.parent]
+    for file_path, summary in sorted(
+        folders.values(), key=lambda fs: fs[0].name.lower()
+    ):
+        metadata = parse_file_path(file_path)
+        modified_ts = file_path.stat().st_mtime
+        report_date = folder_dates[file_path.parent]
+
+        # Summary-slide fields, mirroring Report._process_summary -- derived from
+        # the peeked summary dict instead of a full Report. When the summary slide
+        # is missing/empty these stay None and path metadata fills in below.
+        if summary:
+            project_id = summary.get("proposal id", None)
+            principal_investigator = (
+                summary.get("principal investigator", "") or ""
+            ).strip()
+            affiliation = (summary.get("affiliation", "") or "").strip()
+            research_regime = (summary.get("research regime", "") or "").strip()
+        else:
+            project_id = principal_investigator = affiliation = research_regime = None
+
         rows.append(
             {
-                "filename": report.filename,
-                "file_path": report.file_path,
-                "project_id": report.project_id or metadata["project_id"],
+                "filename": file_path.name,
+                "file_path": file_path,
+                "project_id": project_id or metadata["project_id"],
                 "report_date": report_date or metadata["report_date"],
                 "year": metadata["year"],
-                "principal_investigator": report.principal_investigator
+                "principal_investigator": principal_investigator
                 or metadata["principal_investigator"],
-                "affiliation": report.affiliation,
-                "research_regime": report.research_regime,
+                "first_name": metadata["first_name"],
+                "last_name": metadata["last_name"],
+                "affiliation": affiliation,
+                "research_regime": research_regime,
                 "modified": datetime.fromtimestamp(modified_ts),
-                "folder": report.file_path.parent,
+                "folder": file_path.parent,
                 "is_active": "Yes" if report_date >= CUTOFF_DATE else "No",
             }
         )
@@ -148,6 +208,8 @@ def find_latest_report_pptx(root_dir: Path | str) -> pd.DataFrame:
                 "report_date",
                 "year",
                 "principal_investigator",
+                "first_name",
+                "last_name",
                 "affiliation",
                 "research_regime",
                 "modified",
@@ -169,6 +231,15 @@ def parse_file_path(file_path: Path | str) -> dict:
     parts_split = project_str.split(maxsplit=1)
     project_id = parts_split[0]
     project_pi = parts_split[1] if len(parts_split) > 1 else ""
+    name_parts = project_pi.split()
+    if not name_parts:
+        first_name, last_name = "", ""
+    elif len(name_parts) == 1:
+        # A lone token is a surname, not a given name.
+        first_name, last_name = "", name_parts[0]
+    else:
+        # last token, so a middle name/initial isn't mistaken for the surname.
+        first_name, last_name = name_parts[0], name_parts[-1]
     if len(parts) < 4:
         raise ValueError(f"Unexpected file path structure: {file_path}")
     return {
@@ -176,5 +247,7 @@ def parse_file_path(file_path: Path | str) -> dict:
         "project_id": project_id,
         "report_date": extract_report_date(file_path.name),
         "principal_investigator": project_pi,
+        "first_name": first_name,
+        "last_name": last_name,
         "filename": parts[-1],
     }

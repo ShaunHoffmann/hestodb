@@ -16,7 +16,7 @@ CREATE TYPE institution_category AS ENUM ('university', 'industry', 'government'
 CREATE TYPE spaceflight_platform AS ENUM ('sounding rocket', 'airborne', 'balloon', 'spacecraft', 'space station', 'lander');
 CREATE TYPE spaceflight_destination AS ENUM ('low_earth_orbit', 'geostationary_orbit', 'moon', 'mars', 'deep_space', 'other');
 CREATE TYPE award_type AS ENUM ('grant', 'contract', 'cooperative_agreement', 'other');
-CREATE TYPE publication_type AS ENUM ('peer-reviewed journal', 'non-peer reviewed journal', 'conference presentation (oral)', 'conference presentation (poster)', 'web article', 'other');
+CREATE TYPE publication_type AS ENUM ('peer-reviewed publication', 'non-peer-reviewed publication', 'conference presentation (oral)', 'conference presentation (poster)', 'web article', 'other');
 -- -----------------------------
 -- Foundation tables from user draft
 -- -----------------------------

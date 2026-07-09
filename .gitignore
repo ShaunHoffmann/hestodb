@@ -160,6 +160,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# JSON files that may contain sensitive information
+summary_peek_cache.json
+
 # Pyre type checker
 .pyre/
 

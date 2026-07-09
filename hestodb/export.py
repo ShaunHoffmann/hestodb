@@ -72,6 +72,9 @@ COLUMN_GROUPS = {
     "summary": [
         "project_id",
         "principal_investigator",
+        "first_name",
+        "last_name",
+        "email",
         "affiliation",
         "research_regime",
     ],
@@ -79,7 +82,12 @@ COLUMN_GROUPS = {
     "accommodations": list(ACCOMMODATION_FIELDS),
     "publications": ["n_publications", "publications_detail"],
     "patents": ["n_patents", "patents_detail"],
-    "project_status": ["performance_period", *STATUS_PIVOT_COLS],
+    "project_status": [
+        "performance_period",
+        "performance_period_start",
+        "performance_period_end",
+        *STATUS_PIVOT_COLS,
+    ],
     "student_metrics": ["n_students", "students_detail"],
 }
 
@@ -207,6 +215,9 @@ def build_master_table(reports, files, out_path="master_table.csv"):
         row["patents_detail"] = _detail_string(pat, len(PATENT_COLS))
         row["students_detail"] = _detail_string(stu, len(STUDENT_COLS))
         row["performance_period"] = rep.performance_period  # from Project Summary
+        row["performance_period_start"] = rep.performance_period_start
+        row["performance_period_end"] = rep.performance_period_end
+        row["email"] = rep.email
 
         row.update(accommodation_fields(rep))  # accommodations slide -> columns
 

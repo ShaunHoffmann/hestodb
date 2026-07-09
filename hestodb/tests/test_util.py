@@ -70,6 +70,8 @@ def test_parse_file_path_extracts_expected_metadata_from_string():
     assert metadata["year"] == 2024
     assert metadata["project_id"] == "24-HTIDS24-0009"
     assert metadata["principal_investigator"] == "Jane Smith"
+    assert metadata["first_name"] == "Jane"
+    assert metadata["last_name"] == "Smith"
     assert metadata["filename"] == "report.pptx"
 
 
@@ -80,6 +82,8 @@ def test_parse_file_path_extracts_expected_metadata_from_path():
     assert metadata["year"] == 2025
     assert metadata["project_id"] == "25-HTIDS24-0010"
     assert metadata["principal_investigator"] == "Ada Lovelace"
+    assert metadata["first_name"] == "Ada"
+    assert metadata["last_name"] == "Lovelace"
     assert metadata["filename"] == "update.pptx"
 
 
@@ -94,6 +98,8 @@ def test_find_latest_report_pptx_returns_empty_dataframe_when_no_matches(tmp_pat
         "report_date",
         "year",
         "principal_investigator",
+        "first_name",
+        "last_name",
         "affiliation",
         "research_regime",
         "modified",
@@ -139,6 +145,67 @@ def test_find_latest_report_pptx_selects_newest_file_per_folder_and_skips_lock_f
     assert result.loc[newer.name, "principal_investigator"] == "Jane Smith"
     assert result.loc[newer.name, "year"] == 2024
     assert result.loc[newer.name, "folder"] == newer.parent
+    assert older.name not in result.index
+
+
+def test_find_latest_report_pptx_summary_tie_broken_by_filename_date(tmp_path):
+    """When two files in a folder share the same summary date, the later
+    filename YYYYMM wins -- even if it has the OLDER modified time."""
+    project = "24-HTIDS24-0009 Jane Smith"
+
+    # Same summary date -> summary_dt ties -> filename date is the tiebreak.
+    # Winner has the later filename month (202608) but the EARLIER mtime, proving
+    # the filename date (not mtime) decided it.
+    winner = _create_report_file(
+        tmp_path,
+        "24",
+        project,
+        "HESTO-202608_Report_24-HTIDS24-0009_later.pptx",
+        mtime=1700000000,
+        date="7/15/2026",
+    )
+    loser = _create_report_file(
+        tmp_path,
+        "24",
+        project,
+        "HESTO-202606_Report_24-HTIDS24-0009_earlier.pptx",
+        mtime=1700000999,
+        date="7/15/2026",
+    )
+
+    result = find_latest_report_pptx(tmp_path)
+
+    assert list(result.index) == [winner.name]
+    assert loser.name not in result.index
+
+
+def test_find_latest_report_pptx_summary_and_filename_tie_broken_by_mtime(tmp_path):
+    """When two files share both summary date AND filename YYYYMM, the most
+    recently modified file wins."""
+    project = "24-HTIDS24-0009 Jane Smith"
+
+    # Identical summary date and identical filename month (202607) -> both date
+    # signals tie -> modified time is the final tiebreak.
+    older = _create_report_file(
+        tmp_path,
+        "24",
+        project,
+        "HESTO-202607_Report_24-HTIDS24-0009_a.pptx",
+        mtime=1700000000,
+        date="7/15/2026",
+    )
+    newer = _create_report_file(
+        tmp_path,
+        "24",
+        project,
+        "HESTO-202607_Report_24-HTIDS24-0009_b.pptx",
+        mtime=1700000500,
+        date="7/15/2026",
+    )
+
+    result = find_latest_report_pptx(tmp_path)
+
+    assert list(result.index) == [newer.name]
     assert older.name not in result.index
 
 
@@ -208,3 +275,36 @@ def test_find_latest_report_pptx_mocks_notebook_htides_directory_layout(tmp_path
 def test_parse_file_path_raises_for_unexpected_structure(bad_path):
     with pytest.raises((ValueError, IndexError)):
         parse_file_path(bad_path)
+
+
+def test_find_latest_report_pptx_cache_hit_skips_reopen(tmp_path, monkeypatch):
+    """A second run with an unchanged file uses the cache and never re-opens it."""
+    _create_report_file(
+        tmp_path,
+        "24",
+        "24-HTIDS24-0009 Jane Smith",
+        "HESTO-202607_Report.pptx",
+        mtime=1700000000,
+        date="7/15/2026",
+    )
+    cache_file = tmp_path / "cache.json"
+
+    # First run populates the cache.
+    first = find_latest_report_pptx(tmp_path, cache_path=cache_file)
+    assert cache_file.exists()
+    assert len(first) == 1
+
+    # Second run: peek_summary must not be called for the unchanged file.
+    from hestodb import util
+
+    orig = util.Report.peek_summary
+    calls = []
+    monkeypatch.setattr(
+        util.Report,
+        "peek_summary",
+        staticmethod(lambda fp: calls.append(fp) or orig(fp)),
+    )
+    second = find_latest_report_pptx(tmp_path, cache_path=cache_file)
+
+    assert calls == []  # served entirely from cache
+    assert list(second.index) == list(first.index)
