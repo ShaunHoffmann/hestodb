@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+from datetime import date
 
 from hestodb import _test_files_directory
 from hestodb.report import Report, check_volume_calculation
@@ -21,7 +22,7 @@ def test_report_string_path():
 
 def test_report_slide_count():
     report = Report(test_report_file)
-    assert len(report.slide_titles) == 33
+    assert len(report.slide_titles) == 34
 
 
 def test_report_project_id():
@@ -42,14 +43,15 @@ def test_report_slide_titles():
         "    project\u2019s relevance and impact ",
         "key accomplishments",
         "project highlights",
-        "technology trl status",
+        "system trl status",
         "technology maturation and infusion",
         "science traceability matrix",
         "project summary",
         "issue log",
         "budget reporting",
         "planned accomplishments",
-        "student metrics and support",
+        "student metrics",
+        "hesto support",
         "      anticipated payload accommodation need ",
         "      presentations",
         "patents, licenses",
@@ -83,7 +85,7 @@ def test_report_repr():
     report = Report(test_report_file)
     result = repr(report)
     assert "HESTO-202612_Report_24-HTIDS24_Smith-rev3.pptx" in result
-    assert "33 slides" in result
+    assert "34 slides" in result
     assert "24-HTIDS24-0009" in result
     assert "Jane Smith" in result
 
@@ -167,7 +169,7 @@ def test_report_publication_table_records_match_expected():
         {
             "Type choose one of below": "Conference presentation (oral)",
             "Title": "Development of the Next-Generation Solar X-ray detector",
-            "Publication/Presentation Date": "23-Jan-2026",
+            "Publication/Presentation Date": date(2026, 1, 23),
             "Publisher/Conference Name": "IEEE NSS/MIC",
             "URL": "https://ieeexplore.ieee.org/document/10657175",
         }
