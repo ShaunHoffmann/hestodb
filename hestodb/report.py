@@ -26,6 +26,57 @@ PUBLICATION_TYPES = [
     "Web article",
 ]
 
+# Canonical field name -> (how, label) for the Summary slide's label/value table.
+#   "exact"  : the summary dict key must equal *label*
+#   "prefix" : the summary dict key must START WITH *label*, so a PI who trims a
+#              trailing parenthetical instruction -- "Technology Name (Acronym)"
+#              -> "Technology Name" -- still matches.
+# Labels are pre-lowercased to match parse_summary_slide's dict keys.
+SUMMARY_FIELD_SPEC = {
+    "project_id": ("exact", "proposal id"),
+    "principal_investigator": ("exact", "principal investigator"),
+    "email": ("exact", "pi email"),
+    "affiliation": ("exact", "affiliation"),
+    "research_regime": ("exact", "research regime"),
+    "proposal_title": ("exact", "proposal title"),
+    "hesto_taxonomy": ("exact", "hesto taxonomy"),
+    "technology_keyword": ("exact", "technology keyword"),
+    "techport_url": ("exact", "techport url"),
+    "technology_name": ("prefix", "technology name"),
+    "instrument_types": ("prefix", "instrument type"),
+    "project_summary": ("prefix", "project summary"),
+}
+
+
+def extract_summary_fields(summary: dict | None) -> dict:
+    """Map a raw Summary-slide dict onto the canonical names in SUMMARY_FIELD_SPEC.
+
+    *summary* is the label -> value dict from Report.parse_summary_slide, whose
+    keys are already lowercased and trimmed. Returns one entry per spec key; a
+    label that is absent or blank yields None. Never raises: a missing or
+    malformed summary slide returns an all-None dict, so one bad deck cannot
+    stop a batch.
+
+    Sole owner of the summary label strings -- both Report._process_summary and
+    util.find_latest_report_pptx call this, so the two paths cannot drift.
+    """
+    fields = {name: None for name in SUMMARY_FIELD_SPEC}
+    if not isinstance(summary, dict):
+        return fields
+    for name, (how, label) in SUMMARY_FIELD_SPEC.items():
+        value = None
+        if how == "exact":
+            value = summary.get(label)
+        if how == "prefix":
+            for key, candidate in summary.items():
+                if key.startswith(label):
+                    value = candidate
+                    break
+        fields[name] = (
+            value.strip() if isinstance(value, str) and value.strip() else None
+        )
+    return fields
+
 
 def extract_report_date(filename: str) -> str:
     """Return the report date (YYYYMM) extracted from *filename*, or empty string if not found."""
@@ -58,6 +109,18 @@ def format_report_date(report_date: str) -> str:
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
+    # Try Mon YYYY format
+    try:
+        dt = datetime.strptime(f"{report_date}15", "%b %Y%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try Mon. YYYY format
+    try:
+        dt = datetime.strptime(f"{report_date}15", "%b. %Y%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
     # Try MM/DD/YYYY format
     try:
         dt = datetime.strptime(report_date, "%m/%d/%Y")
@@ -85,6 +148,12 @@ def format_report_date(report_date: str) -> str:
     # Try "DD-Month-YYYY" format (e.g., "13-May-2026")
     try:
         dt = datetime.strptime(report_date, "%d-%B-%Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try "DD-Mon-YYYY" format (e.g., "13-Jan-2026")
+    try:
+        dt = datetime.strptime(report_date, "%d-%b-%Y")
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         pass
@@ -196,20 +265,31 @@ def check_volume_calculation(x: float, y: float, z: float, volume: float) -> boo
     return consistent
 
 
+def is_report_active(performance_period_end) -> bool:
+    """Return True while today is still before the performance-period end date.
+
+    Single source of truth for "active". Accepts the value straight off a
+    :class:`Report` (a ``date`` or ``None``) or off the master table (a date/NaT);
+    a missing end date counts as Inactive.
+    """
+    if performance_period_end is None or pd.isna(performance_period_end):
+        return False
+    return pd.Timestamp.today() < pd.Timestamp(performance_period_end)
+
+
 @dataclass(repr=False)
 class Report:
     file_path: str | Path
 
     filename: str = field(init=False)
     project_id: str | None = field(init=False, default=None)
-    # summary: object = field(init=False, default=None)
-    research_regime: str | None = field(init=False, default=None)
-    affiliation: str | None = field(init=False, default=None)
     project_status: pd.DataFrame | None = field(init=False, default=None)
+    # Raw Summary-slide label -> value dict. Every summary field other than
+    # project_id / principal_investigator is read from here through
+    # extract_summary_fields rather than stored as its own attribute.
     summary: dict | None = field(init=False, default=None)
     slide_titles: list = field(init=False, default_factory=list)
     principal_investigator: str | None = field(init=False, default=None)
-    email: str | None = field(init=False, default=None)
     accomodation_table: pd.DataFrame | None = field(init=False, default=None)
     publication_table: pd.DataFrame | None = field(init=False, default=None)
     patents_table: pd.DataFrame | None = field(init=False, default=None)
@@ -218,6 +298,11 @@ class Report:
     performance_period: str = field(init=False, default="")
     performance_period_start: date | None = field(init=False, default=None)
     performance_period_end: date | None = field(init=False, default=None)
+
+    @property
+    def is_active(self) -> bool:
+        """True while today is before this report's performance-period end date."""
+        return is_report_active(self.performance_period_end)
 
     def __post_init__(self):
         # Ensure file_path is a Path object and check existence
@@ -292,15 +377,21 @@ class Report:
         return None
 
     def _process_summary(self, summary: dict) -> None:
-        """Extract fields from the parsed summary dict and validate values."""
-        self.project_id = summary.get("proposal id", None)
-        self.principal_investigator = (
-            summary.get("principal investigator", "") or ""
-        ).strip()
-        self.email = (summary.get("pi email", "") or "").strip()
-        regime_value = summary.get("research regime", "")
-        self.research_regime = regime_value.strip()
-        self.affiliation = (summary.get("affiliation", "") or "").strip()
+        """Store the two summary fields Report still exposes, and validate values.
+
+        The label -> field mapping lives in SUMMARY_FIELD_SPEC and is applied by
+        extract_summary_fields, which util.py reuses. Only project_id and
+        principal_investigator are kept as attributes -- __repr__ and
+        get_accomodation_data read them, and they keep their legacy "" semantics
+        for a missing value. Every other summary field is reachable through
+        extract_summary_fields(self.summary) and reaches the master CSV via the
+        files DataFrame, where missing values are None.
+        """
+        fields = extract_summary_fields(summary)
+        self.project_id = fields["project_id"]
+        self.principal_investigator = fields["principal_investigator"] or ""
+        regime_value = fields["research_regime"] or ""
+
         valid = [r for r in RESEARCH_REGIMES if r in regime_value.lower()]
         if not valid:
             logger.warning(
@@ -326,6 +417,12 @@ class Report:
             if not data:
                 return None
             df = pd.DataFrame(data, columns=header)
+            date_col = next((h for h in header if "date" in h.lower()), None)
+            if date_col is not None:
+                normalized = df[date_col].map(format_report_date)
+                df[date_col] = pd.to_datetime(
+                    normalized, errors="coerce", format="mixed"
+                ).dt.date
             return df
         return None
 
@@ -554,7 +651,7 @@ class Report:
             date_col = next((h for h in header if "date" in h.lower()), None)
             if date_col is not None:
                 normalized = df[date_col].map(format_report_date)
-                parsed = pd.to_datetime(normalized, errors="coerce")
+                parsed = pd.to_datetime(normalized, errors="coerce", format="mixed")
                 failed_mask = parsed.isna() & normalized.astype(str).str.strip().ne("")
                 if failed_mask.any():
                     for raw_val in normalized[failed_mask]:

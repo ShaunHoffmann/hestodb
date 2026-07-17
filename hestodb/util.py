@@ -1,8 +1,14 @@
 from pathlib import Path
+from pptx import Presentation
 import json
 import pandas as pd
 from datetime import datetime
-from hestodb.report import extract_report_date, format_report_date, Report
+from hestodb.report import (
+    extract_report_date,
+    extract_summary_fields,
+    format_report_date,
+    Report,
+)
 
 CUTOFF_DATE = datetime(2025, 12, 31)
 
@@ -111,9 +117,16 @@ def find_latest_report_pptx(
         - principal_investigator: PI name from Report summary
         - report_date: formatted date from summary slide (YYYY-MM-DD)
         - year: extracted year from folder structure
+        - summary-slide fields (email, affiliation, research_regime,
+          proposal_title, technology_name, hesto_taxonomy, instrument_types,
+          technology_keyword, project_summary, techport_url): extracted via
+          report.extract_summary_fields; None when the label is absent or blank
         - modified: last-modified datetime (local time)
         - folder: parent folder used for grouping
-        - is_active: "Yes" if report_date >= 2025-12-01, "No" otherwise
+        - slide_count: number of slides in the selected deck
+
+    Active/inactive status is not computed here; it is derived downstream from
+    each report's performance-period end date (see report.is_report_active).
     """
     if isinstance(root_dir, str):
         root_dir = Path(root_dir)
@@ -167,35 +180,37 @@ def find_latest_report_pptx(
         modified_ts = file_path.stat().st_mtime
         report_date = folder_dates[file_path.parent]
 
-        # Summary-slide fields, mirroring Report._process_summary -- derived from
-        # the peeked summary dict instead of a full Report. When the summary slide
-        # is missing/empty these stay None and path metadata fills in below.
-        if summary:
-            project_id = summary.get("proposal id", None)
-            principal_investigator = (
-                summary.get("principal investigator", "") or ""
-            ).strip()
-            affiliation = (summary.get("affiliation", "") or "").strip()
-            research_regime = (summary.get("research regime", "") or "").strip()
-        else:
-            project_id = principal_investigator = affiliation = research_regime = None
+        # Summary-slide fields, derived from the peeked summary dict instead of a
+        # full Report. extract_summary_fields owns the label -> field mapping and
+        # is shared with Report._process_summary, so the two paths cannot drift.
+        # An absent or blank label yields None (pandas writes None as an empty
+        # CSV cell); path metadata fills in project_id / PI below.
+        fields = extract_summary_fields(summary)
 
         rows.append(
             {
                 "filename": file_path.name,
                 "file_path": file_path,
-                "project_id": project_id or metadata["project_id"],
+                "project_id": fields["project_id"] or metadata["project_id"],
                 "report_date": report_date or metadata["report_date"],
                 "year": metadata["year"],
-                "principal_investigator": principal_investigator
+                "principal_investigator": fields["principal_investigator"]
                 or metadata["principal_investigator"],
                 "first_name": metadata["first_name"],
                 "last_name": metadata["last_name"],
-                "affiliation": affiliation,
-                "research_regime": research_regime,
+                "email": fields["email"],
+                "affiliation": fields["affiliation"],
+                "research_regime": fields["research_regime"],
+                "proposal_title": fields["proposal_title"],
+                "technology_name": fields["technology_name"],
+                "hesto_taxonomy": fields["hesto_taxonomy"],
+                "instrument_types": fields["instrument_types"],
+                "technology_keyword": fields["technology_keyword"],
+                "project_summary": fields["project_summary"],
+                "techport_url": fields["techport_url"],
                 "modified": datetime.fromtimestamp(modified_ts),
                 "folder": file_path.parent,
-                "is_active": "Yes" if report_date >= CUTOFF_DATE else "No",
+                "slide_count": len(Presentation(str(file_path)).slides),
             }
         )
 
@@ -210,16 +225,28 @@ def find_latest_report_pptx(
                 "principal_investigator",
                 "first_name",
                 "last_name",
+                "email",
                 "affiliation",
                 "research_regime",
+                "proposal_title",
+                "technology_name",
+                "hesto_taxonomy",
+                "instrument_types",
+                "technology_keyword",
+                "project_summary",
+                "techport_url",
                 "modified",
                 "folder",
-                "is_active",
+                "slide_count",
             ]
         )
-        return empty_df.set_index("filename")
+        return empty_df.set_index("filename", drop=False)
 
-    return pd.DataFrame(rows).set_index("filename").sort_values("year", ascending=False)
+    return (
+        pd.DataFrame(rows)
+        .set_index("filename", drop=False)
+        .sort_values("year", ascending=False)
+    )
 
 
 def parse_file_path(file_path: Path | str) -> dict:

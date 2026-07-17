@@ -1,8 +1,8 @@
 from pathlib import Path
 import pytest
+import pandas as pd
 from pptx import Presentation
 from pptx.util import Inches
-
 from hestodb.util import find_latest_report_pptx, parse_file_path
 
 
@@ -39,6 +39,10 @@ def _create_report_file(
     table_shape = slide.shapes.add_table(rows, cols, left, top, width, height).table
 
     # Add headers and sample data
+    # NOTE: "Technology Name" and "Project Summary" deliberately OMIT the
+    # template's trailing parentheticals ("(Acronym)", "(two to three
+    # sentences)"). This is the real-world shape prefix matching exists for --
+    # do not "fix" these labels.
     summary_data = [
         ("Date", date),
         ("Proposal ID", "24-HTIDS24-0009"),
@@ -93,6 +97,7 @@ def test_find_latest_report_pptx_returns_empty_dataframe_when_no_matches(tmp_pat
     assert result.empty
     assert result.index.name == "filename"
     assert list(result.columns) == [
+        "filename",
         "file_path",
         "project_id",
         "report_date",
@@ -100,11 +105,19 @@ def test_find_latest_report_pptx_returns_empty_dataframe_when_no_matches(tmp_pat
         "principal_investigator",
         "first_name",
         "last_name",
+        "email",
         "affiliation",
         "research_regime",
+        "proposal_title",
+        "technology_name",
+        "hesto_taxonomy",
+        "instrument_types",
+        "technology_keyword",
+        "project_summary",
+        "techport_url",
         "modified",
         "folder",
-        "is_active",
+        "slide_count",
     ]
 
 
@@ -308,3 +321,73 @@ def test_find_latest_report_pptx_cache_hit_skips_reopen(tmp_path, monkeypatch):
 
     assert calls == []  # served entirely from cache
     assert list(second.index) == list(first.index)
+
+
+def test_find_latest_report_pptx_extracts_summary_fields_via_shared_extractor(tmp_path):
+    """files carries every summary-slide field, resolved by extract_summary_fields.
+
+    The mock deck's labels are TRIMMED ("Technology Name", "Project Summary"),
+    so this exercises the prefix-matching branch end-to-end through peek_summary.
+    """
+    report = _create_report_file(
+        tmp_path,
+        "24",
+        "24-HTIDS24-0009 Jane Smith",
+        "HESTO-202612_Report.pptx",
+        mtime=1700000000,
+        date="12/15/2026",
+    )
+
+    row = find_latest_report_pptx(tmp_path).loc[report.name]
+
+    # prefix-matched despite the missing parentheticals
+    assert row["technology_name"] == "TestTech"
+    assert row["project_summary"] == "Test summary"
+    # exact-matched
+    assert row["proposal_title"] == "Test Proposal"
+    assert row["affiliation"] == "Test University"
+    assert row["research_regime"] == "Magnetosphere"
+
+
+def test_find_latest_report_pptx_absent_summary_labels_are_missing(tmp_path):
+    """Labels the deck never supplied read back as missing, not as a literal."""
+    report = _create_report_file(
+        tmp_path,
+        "24",
+        "24-HTIDS24-0009 Jane Smith",
+        "HESTO-202612_Report.pptx",
+        mtime=1700000000,
+        date="12/15/2026",
+    )
+
+    row = find_latest_report_pptx(tmp_path).loc[report.name]
+
+    # extract_summary_fields returns None, but pandas stores the missing value as
+    # None (object dtype) or NaN (str dtype) depending on whether ANY row in the
+    # batch supplied that column. Assert with pd.isna -- never `is None`.
+    for column in [
+        "email",
+        "hesto_taxonomy",
+        "instrument_types",
+        "technology_keyword",
+        "techport_url",
+    ]:
+        assert pd.isna(row[column]), f"{column} should be missing, got {row[column]!r}"
+
+
+def test_find_latest_report_pptx_missing_labels_write_empty_csv_cells(tmp_path):
+    """Missing summary fields serialize as empty cells, never the string 'None'."""
+    _create_report_file(
+        tmp_path,
+        "24",
+        "24-HTIDS24-0009 Jane Smith",
+        "HESTO-202612_Report.pptx",
+        mtime=1700000000,
+        date="12/15/2026",
+    )
+
+    files = find_latest_report_pptx(tmp_path)
+    csv_text = files[["project_id", "email", "techport_url"]].to_csv()
+
+    assert "None" not in csv_text
+    assert csv_text.splitlines()[1].endswith(",,")  # email + techport_url blank

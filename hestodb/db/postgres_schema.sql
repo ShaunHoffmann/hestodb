@@ -119,7 +119,6 @@ CREATE TABLE mission (
 	short_description TEXT,
 	science_discipline_id BIGINT,
 	science_region_id BIGINT,
-	hesto_taxonomy_id BIGINT,
 	spaceflight_destination spaceflight_destination,
 	spaceflight_platform spaceflight_platform,
 	selection_letter_url TEXT,
@@ -128,7 +127,6 @@ CREATE TABLE mission (
 	PRIMARY KEY (id),
 	FOREIGN KEY(science_discipline_id) REFERENCES science_discipline_lookup (id) ON DELETE SET NULL,
 	FOREIGN KEY(science_region_id) REFERENCES science_region_lookup (id) ON DELETE SET NULL,
-	FOREIGN KEY(hesto_taxonomy_id) REFERENCES hesto_taxonomy_lookup (id) ON DELETE SET NULL,
 	FOREIGN KEY(pi_id) REFERENCES people (id) ON DELETE SET NULL,
 	FOREIGN KEY(created_by_id) REFERENCES admin_people (id) ON DELETE SET NULL,
 	FOREIGN KEY(edited_by_id) REFERENCES admin_people (id) ON DELETE SET NULL
@@ -157,7 +155,6 @@ CREATE TABLE technology (
 	relevance_to_science TEXT,
 	relevance_to_agency TEXT,
 	relevance_to_country TEXT,
-	mission_id BIGINT NOT NULL,
 	trl_current trl_level,
 	size_length NUMERIC CONSTRAINT ck_technology_size_length CHECK (size_length IS NULL OR size_length >= 0),
 	size_width NUMERIC CONSTRAINT ck_technology_size_width CHECK (size_width IS NULL OR size_width >= 0),
@@ -175,10 +172,11 @@ CREATE TABLE technology (
 	protocol_communication TEXT,
 	special_power_considerations TEXT,
 	requires_thermal_isolation BOOLEAN DEFAULT false NOT NULL,
+	hesto_taxonomy_id BIGINT,
 	PRIMARY KEY (id),
 	FOREIGN KEY(created_by_id) REFERENCES admin_people (id) ON DELETE SET NULL,
 	FOREIGN KEY(edited_by_id) REFERENCES admin_people (id) ON DELETE SET NULL,
-	FOREIGN KEY(mission_id) REFERENCES mission (id) ON DELETE RESTRICT
+	FOREIGN KEY(hesto_taxonomy_id) REFERENCES hesto_taxonomy_lookup (id)
 )
 
 CREATE TABLE awards (
@@ -315,8 +313,6 @@ CREATE INDEX idx_mission_created_by_id ON mission (created_by_id)
 
 CREATE INDEX idx_mission_edited_by_id ON mission (edited_by_id)
 
-CREATE INDEX idx_mission_hesto_taxonomy_id ON mission (hesto_taxonomy_id)
-
 CREATE INDEX idx_mission_pi_id ON mission (pi_id)
 
 CREATE INDEX idx_mission_science_discipline_id ON mission (science_discipline_id)
@@ -326,8 +322,6 @@ CREATE INDEX idx_mission_science_region_id ON mission (science_region_id)
 CREATE INDEX idx_technology_created_by_id ON technology (created_by_id)
 
 CREATE INDEX idx_technology_edited_by_id ON technology (edited_by_id)
-
-CREATE INDEX idx_technology_mission_id ON technology (mission_id)
 
 CREATE INDEX idx_awards_pi_id ON awards (pi_id)
 
