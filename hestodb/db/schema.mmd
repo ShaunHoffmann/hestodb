@@ -56,7 +56,6 @@ erDiagram
         TEXT short_description
         BIGINT science_discipline_id
         BIGINT science_region_id
-        BIGINT hesto_taxonomy_id
         SPACEFLIGHT_DESTINATION spaceflight_destination
         SPACEFLIGHT_PLATFORM spaceflight_platform
         TEXT selection_letter_url
@@ -141,7 +140,6 @@ erDiagram
         TEXT relevance_to_science
         TEXT relevance_to_agency
         TEXT relevance_to_country
-        BIGINT mission_id
         TRL_LEVEL trl_current
         NUMERIC size_length
         NUMERIC size_width
@@ -159,6 +157,7 @@ erDiagram
         TEXT protocol_communication
         TEXT special_power_considerations
         BOOLEAN requires_thermal_isolation
+        BIGINT hesto_taxonomy_id
     }
     technology_category {
         BIGINT id
@@ -198,14 +197,13 @@ erDiagram
     institutions ||--o{ people : institution_id
     science_discipline_lookup ||--o{ mission : science_discipline_id
     science_region_lookup ||--o{ mission : science_region_id
-    hesto_taxonomy_lookup ||--o{ mission : hesto_taxonomy_id
     people ||--o{ mission : pi_id
     admin_people ||--o{ mission : created_by_id
     admin_people ||--o{ mission : edited_by_id
     us_state_lookup ||--o{ zip_state_lookup : state_code
     admin_people ||--o{ technology : created_by_id
     admin_people ||--o{ technology : edited_by_id
-    mission ||--o{ technology : mission_id
+    hesto_taxonomy_lookup ||--o{ technology : hesto_taxonomy_id
     people ||--o{ awards : pi_id
     technology ||--o{ awards : technology_id
     admin_people ||--o{ awards : created_by_id

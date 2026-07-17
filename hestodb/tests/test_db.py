@@ -17,7 +17,7 @@ def test_schema_file_path_points_to_db_sql_file():
 def test_sql_mermaid_render_contains_key_relationships():
     diagram = db.render_mermaid_schema_from_sql()
     assert diagram.startswith("erDiagram")
-    assert "mission ||--o{ technology : mission_id" in diagram
+    assert "hesto_taxonomy_lookup ||--o{ technology : hesto_taxonomy_id" in diagram
     assert "awards ||--o{ reports : award_id" in diagram
 
 

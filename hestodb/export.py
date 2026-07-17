@@ -10,7 +10,7 @@ In every function ``reports[i]`` must align positionally with row ``i`` of the
 """
 
 import pandas as pd
-from hestodb.report import get_accom_value
+from hestodb.report import get_accom_value, is_report_active
 
 # Clean column names for each sub-table, in slide column order. Headers are
 # renamed BY POSITION, so verbose / inconsistent PPTX headers don't matter.
@@ -69,6 +69,9 @@ ACCOMMODATION_FIELDS = {
 # Map every master column to its top-level (slide / source) group. Columns not
 # listed here fall under "metadata" (file_path, report_date, year, ...).
 COLUMN_GROUPS = {
+    # Every summary-slide field arrives on the ``files`` DataFrame, which util.py
+    # builds with report.extract_summary_fields. build_master_table injects none
+    # of them: a column present in BOTH files and agg collides in files.join(agg).
     "summary": [
         "project_id",
         "principal_investigator",
@@ -77,6 +80,13 @@ COLUMN_GROUPS = {
         "email",
         "affiliation",
         "research_regime",
+        "proposal_title",
+        "technology_name",
+        "hesto_taxonomy",
+        "instrument_types",
+        "technology_keyword",
+        "project_summary",
+        "techport_url",
     ],
     "trl_status": ["trl_input", "trl_current", "trl_planned_exit"],
     "accommodations": list(ACCOMMODATION_FIELDS),
@@ -151,19 +161,17 @@ def _normalize_columns(df, clean_cols):
 
 
 def build_detail_csv(reports, files, attr, clean_cols, out_path):
-    """Stack one sub-table across all ACTIVE reports into a long CSV.
+    """Stack one sub-table across all reports (Active and Inactive) into a long CSV.
 
     ``project_id`` (from ``files``, so the join key matches the master) is
     prepended as the link key; the sub-table's columns are normalized by
     position; rows that are entirely blank (ignoring ``project_id``) are
     dropped. Pass ``out_path=None`` to skip writing. Returns the DataFrame.
     """
-    files = files.reset_index(drop=True)
+    files = files.reset_index(drop=True)  # align with reports position
     clean_cols = list(clean_cols)
     frames = []
     for i, rep in enumerate(reports):
-        if files.loc[i, "is_active"] != "Yes":  # active reports only
-            continue
         df = getattr(rep, attr)
         if df is None or df.empty:  # skip missing sub-tables
             continue
@@ -188,7 +196,7 @@ def build_detail_csv(reports, files, attr, clean_cols, out_path):
 
 
 def build_master_table(reports, files, out_path="master_table.csv"):
-    """Roll all six slide parsers up to one row per ACTIVE report.
+    """Roll all six slide parsers up to one row per report (Active and Inactive).
 
     ``project_status`` is pivoted to fixed ``{category}_prior/current/rationale``
     columns; the variable-length tables contribute a count (``n_*``) and a
@@ -217,7 +225,6 @@ def build_master_table(reports, files, out_path="master_table.csv"):
         row["performance_period"] = rep.performance_period  # from Project Summary
         row["performance_period_start"] = rep.performance_period_start
         row["performance_period_end"] = rep.performance_period_end
-        row["email"] = rep.email
 
         row.update(accommodation_fields(rep))  # accommodations slide -> columns
 
@@ -243,7 +250,12 @@ def build_master_table(reports, files, out_path="master_table.csv"):
 
     # files index (0..n) aligns with reports position == agg _pos
     master = files.join(agg)
-    master = master[master["is_active"] == "Yes"].reset_index(drop=True)
+    # is_active labels each row from its performance-period end (Active while today
+    # is before end_date); both Active and Inactive reports are kept.
+    master["is_active"] = master["performance_period_end"].map(
+        lambda d: "Active" if is_report_active(d) else "Inactive"
+    )
+    master = master.reset_index(drop=True)
     master = master.drop(columns=["index"], errors="ignore")  # reset_index artifact
 
     # order columns so each top-level group is contiguous

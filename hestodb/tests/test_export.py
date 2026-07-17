@@ -1,7 +1,12 @@
+import shutil
+from datetime import date
+
 import pandas as pd
 
 from hestodb import _test_report_pptx
-from hestodb.report import Report
+from hestodb.report import Report, is_report_active
+from hestodb.util import find_latest_report_pptx
+
 from hestodb.export import (
     build_detail_csv,
     build_master_table,
@@ -19,6 +24,11 @@ from hestodb.export import (
     STATUS_PIVOT_COLS,
 )
 
+# Performance-period end dates that make a report active / inactive under the new
+# rule (active while today < end). Kept within pandas Timestamp bounds (< 2262).
+ACTIVE_END = date(2200, 1, 1)
+INACTIVE_END = date(2000, 1, 1)
+
 
 class FakeReport:
     """Minimal stand-in exposing the attributes ``build_*`` reads off a Report.
@@ -27,6 +37,10 @@ class FakeReport:
     fake matches the attribute name :func:`accommodation_fields` actually reads.
     ``performance_period_start`` / ``performance_period_end`` are included
     because :func:`build_master_table` reads them unconditionally.
+
+    No summary-slide fields here: they all arrive on the ``files`` DataFrame
+    (util.py builds them via report.extract_summary_fields), so
+    :func:`build_master_table` reads none of them off the report.
     """
 
     def __init__(
@@ -39,8 +53,7 @@ class FakeReport:
         trl_status_table=None,
         performance_period="",
         performance_period_start=None,
-        performance_period_end=None,
-        email=None,
+        performance_period_end=ACTIVE_END,  # active by default; pass INACTIVE_END to drop
     ):
         self.publication_table = publication_table
         self.patents_table = patents_table
@@ -51,7 +64,10 @@ class FakeReport:
         self.performance_period = performance_period
         self.performance_period_start = performance_period_start
         self.performance_period_end = performance_period_end
-        self.email = email
+
+    @property
+    def is_active(self):
+        return is_report_active(self.performance_period_end)
 
 
 def _verbose_publication_df(rows):
@@ -71,6 +87,18 @@ def _accom_df(rows):
     return pd.DataFrame(rows, columns=["category", "sub_category", "value"])
 
 
+# The 7 fields added to the summary slide, sourced from `files`, not the Report.
+SUMMARY_SLIDE_COLS = [
+    "proposal_title",
+    "technology_name",
+    "hesto_taxonomy",
+    "instrument_types",
+    "technology_keyword",
+    "project_summary",
+    "techport_url",
+]
+
+
 def _make_files():
     return pd.DataFrame(
         [
@@ -80,6 +108,14 @@ def _make_files():
                 "year": 2024,
                 "project_id": "P1",
                 "principal_investigator": "PI1",
+                "email": "pi1@example.org",
+                "proposal_title": "Title 1",
+                "technology_name": "TECH1",
+                "hesto_taxonomy": "Photons \u2013 X-rays",  # U+2013 en-dash
+                "instrument_types": "Spectrometer",
+                "technology_keyword": "Quantum Sensing",
+                "project_summary": "Sentence one. Two. Three.",
+                "techport_url": "https://techport.nasa.gov/projects/95780",
                 "is_active": "Yes",
             },
             {
@@ -88,6 +124,14 @@ def _make_files():
                 "year": 2024,
                 "project_id": "P2",
                 "principal_investigator": "PI2",
+                "email": "pi2@example.org",
+                "proposal_title": "Title 2",
+                "technology_name": "TECH2",
+                "hesto_taxonomy": "Particles",
+                "instrument_types": "Magnetometer",
+                "technology_keyword": "Detectors",
+                "project_summary": "Other summary.",
+                "techport_url": "https://techport.nasa.gov/projects/11111",
                 "is_active": "No",
             },
         ]
@@ -296,35 +340,27 @@ def test_build_detail_csv_renames_by_position_and_prepends_project_id():
     ]
 
 
-def test_build_detail_csv_skips_inactive_and_missing_subtables():
+def test_build_detail_csv_includes_inactive_and_skips_missing_subtables():
     pub = _verbose_publication_df([["Web article", "T", "d", "p", "u"]])
     reports = [
         FakeReport(publication_table=pub),  # active + data -> kept
-        FakeReport(publication_table=pub),  # inactive -> dropped
-        FakeReport(publication_table=None),  # active but no sub-table -> skipped
+        FakeReport(
+            publication_table=pub, performance_period_end=INACTIVE_END
+        ),  # inactive + data -> kept
+        FakeReport(publication_table=None),  # no sub-table -> skipped regardless
     ]
     files = pd.DataFrame(
         [
-            {"project_id": "P1", "is_active": "Yes"},
-            {"project_id": "P2", "is_active": "No"},
-            {"project_id": "P3", "is_active": "Yes"},
+            {"project_id": "P1"},
+            {"project_id": "P2"},
+            {"project_id": "P3"},
         ]
     )
 
     out = build_detail_csv(reports, files, "publication_table", PUBLICATION_COLS, None)
 
-    assert out["project_id"].tolist() == ["P1"]
-
-
-def test_build_detail_csv_is_active_is_case_sensitive():
-    pub = _verbose_publication_df([["Web article", "T", "d", "p", "u"]])
-    reports = [FakeReport(publication_table=pub)]
-    files = pd.DataFrame([{"project_id": "P1", "is_active": "yes"}])  # lowercase
-
-    out = build_detail_csv(reports, files, "publication_table", PUBLICATION_COLS, None)
-
-    # only the exact string "Yes" counts as active (export.py: `!= "Yes"`)
-    assert len(out) == 0
+    # Inactive reports are no longer filtered out; only missing sub-tables are.
+    assert out["project_id"].tolist() == ["P1", "P2"]
 
 
 def test_build_detail_csv_drops_entirely_blank_rows():
@@ -423,7 +459,7 @@ def test_build_detail_csv_writes_file(tmp_path):
 #
 # Docstring at export.py:178-186.
 # --------------------------------------------------------------------------- #
-def test_build_master_table_one_row_per_active_report(tmp_path):
+def test_build_master_table_one_row_per_report_active_and_inactive(tmp_path):
     files = _make_files()
     status = pd.DataFrame(
         [
@@ -439,20 +475,24 @@ def test_build_master_table_one_row_per_active_report(tmp_path):
     )
     reports = [
         FakeReport(publication_table=pub, project_status=status),
-        FakeReport(),  # inactive -> dropped
+        FakeReport(
+            performance_period_end=INACTIVE_END
+        ),  # inactive -> still kept, labelled
     ]
 
     master = build_master_table(reports, files, tmp_path / "master.csv")
 
-    assert len(master) == 1
+    assert len(master) == 2  # both active and inactive reports are kept
     row = master.iloc[0]
     assert row["project_id"] == "P1"
+    assert row["is_active"] == "Active"
     assert row["n_publications"] == 2
     assert row["n_patents"] == 0
     assert row["n_students"] == 0
     assert DETAIL_SEP in row["publications_detail"]
     assert row["overall_current"] == "y"
     assert row["overall_rationale"] == "r1"
+    assert master.iloc[1]["is_active"] == "Inactive"  # the expired report
     assert "index" not in master.columns  # reset_index artifact dropped
 
 
@@ -597,7 +637,7 @@ def test_build_master_table_pulls_accommodations(tmp_path):
         assert name in master.columns
 
 
-def test_build_master_table_zero_active_reports_yields_empty_frame(tmp_path):
+def test_build_master_table_keeps_inactive_report_labelled(tmp_path):
     files = pd.DataFrame(
         [
             {
@@ -606,16 +646,16 @@ def test_build_master_table_zero_active_reports_yields_empty_frame(tmp_path):
                 "year": 2024,
                 "project_id": "P1",
                 "principal_investigator": "PI1",
-                "is_active": "No",
             }
         ]
     )
-    reports = [FakeReport()]
+    reports = [FakeReport(performance_period_end=INACTIVE_END)]
 
     master = build_master_table(reports, files, tmp_path / "m.csv")
 
-    assert len(master) == 0
-    # columns still present even with no active rows
+    # an inactive report is retained (not filtered) and labelled Inactive
+    assert len(master) == 1
+    assert master.iloc[0]["is_active"] == "Inactive"
     assert "project_id" in master.columns
     for c in STATUS_PIVOT_COLS:
         assert c in master.columns
@@ -703,7 +743,8 @@ def test_build_master_table_writes_two_row_header(tmp_path):
 # --------------------------------------------------------------------------- #
 def test_build_detail_csv_with_real_report(tmp_path):
     report = Report(_test_report_pptx)
-    files = pd.DataFrame([{"project_id": report.project_id, "is_active": "Yes"}])
+    report.performance_period_end = ACTIVE_END  # bundled deck has a placeholder period
+    files = pd.DataFrame([{"project_id": report.project_id}])
 
     out = build_detail_csv(
         [report], files, "publication_table", PUBLICATION_COLS, tmp_path / "pub.csv"
@@ -717,9 +758,91 @@ def test_build_detail_csv_with_real_report(tmp_path):
 
 def test_build_detail_csv_status_includes_rationale_column(tmp_path):
     report = Report(_test_report_pptx)
-    files = pd.DataFrame([{"project_id": report.project_id, "is_active": "Yes"}])
+    report.performance_period_end = ACTIVE_END  # bundled deck has a placeholder period
+    files = pd.DataFrame([{"project_id": report.project_id}])
 
     out = build_detail_csv([report], files, "project_status", STATUS_COLS, None)
 
     assert list(out.columns) == ["project_id"] + STATUS_COLS
     assert (out["category"] == "overall").any()
+
+
+# --------------------------------------------------------------------------- #
+# summary-slide fields added to the master (sourced from `files`)
+# --------------------------------------------------------------------------- #
+def test_build_master_table_carries_new_summary_fields_from_files(tmp_path):
+    master = build_master_table(
+        [FakeReport(), FakeReport()], _make_files(), tmp_path / "m.csv"
+    )
+
+    row = master.iloc[0]  # only P1 is active
+    assert row["proposal_title"] == "Title 1"
+    assert row["technology_name"] == "TECH1"
+    assert row["hesto_taxonomy"] == "Photons \u2013 X-rays"
+    assert row["instrument_types"] == "Spectrometer"
+    assert row["technology_keyword"] == "Quantum Sensing"
+    assert row["project_summary"] == "Sentence one. Two. Three."
+    assert row["techport_url"] == "https://techport.nasa.gov/projects/95780"
+
+
+def test_build_master_table_email_from_files_without_join_collision(tmp_path):
+    # `email` lives only on files now. If build_master_table also injected it,
+    # files.join(agg) would raise on overlapping columns.
+    master = build_master_table(
+        [FakeReport(), FakeReport()], _make_files(), tmp_path / "m.csv"
+    )
+
+    assert list(master.columns).count("email") == 1
+    assert not any(c.endswith(("_x", "_y")) for c in master.columns)
+    assert master.iloc[0]["email"] == "pi1@example.org"
+
+
+def test_build_master_table_new_summary_fields_grouped_under_summary(tmp_path):
+    out_file = tmp_path / "m.csv"
+    master = build_master_table([FakeReport(), FakeReport()], _make_files(), out_file)
+
+    for col in SUMMARY_SLIDE_COLS:
+        assert group_for(col) == "summary"
+        assert col in master.columns
+
+    lines = out_file.read_text(encoding="utf-8").splitlines()
+    pairs = list(zip(lines[0].split(","), lines[1].split(",")))
+    for col in SUMMARY_SLIDE_COLS:
+        assert ("summary", col) in pairs
+
+
+def test_build_master_table_summary_block_order_matches_column_groups(tmp_path):
+    master = build_master_table(
+        [FakeReport(), FakeReport()], _make_files(), tmp_path / "m.csv"
+    )
+    cols = list(master.columns)
+
+    summary_cols = [c for c in cols if group_for(c) == "summary"]
+    assert summary_cols == [c for c in COLUMN_GROUPS["summary"] if c in cols]
+    assert summary_cols[-7:] == SUMMARY_SLIDE_COLS  # new fields trail the block
+
+
+def test_build_master_table_with_real_report_includes_new_summary_fields(tmp_path):
+    """End-to-end: real deck -> find_latest_report_pptx -> build_master_table."""
+    deck_dir = tmp_path / "24" / "24-HTIDS24-0009 Jane Smith" / "Reports" / "HESTO"
+    deck_dir.mkdir(parents=True)
+    shutil.copy(_test_report_pptx, deck_dir / _test_report_pptx.name)
+
+    files = find_latest_report_pptx(tmp_path)
+    reports = [Report(fp) for fp in files["file_path"]]
+    for r in reports:  # bundled deck has a placeholder performance period
+        r.performance_period_end = ACTIVE_END
+    master = build_master_table(reports, files, tmp_path / "master.csv")
+
+    row = master.iloc[0]
+    assert row["project_id"] == "24-HTIDS24-0009"
+    assert row["proposal_title"] == "A project to develop a new x-ray detector"
+    assert row["technology_name"] == "AWESOME"
+    assert row["hesto_taxonomy"] == "Photons \u2013 X-rays"
+    assert row["instrument_types"] == "Spectrometer"
+    assert row["technology_keyword"] == "Quantum Sensing"
+    assert row["project_summary"] == (
+        "This is a project to develop a new x-ray detector. "
+        "This is the second sentence. This is the third sentence."
+    )
+    assert row["techport_url"] == "https://techport.nasa.gov/projects/95780"

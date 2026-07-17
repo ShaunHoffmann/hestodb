@@ -1,9 +1,13 @@
 import pytest
 import pandas as pd
 from datetime import date
-
 from hestodb import _test_files_directory
-from hestodb.report import Report, check_volume_calculation
+from hestodb.report import (
+    Report,
+    check_volume_calculation,
+    extract_summary_fields,
+    SUMMARY_FIELD_SPEC,
+)
 
 test_report_file = (
     _test_files_directory / "HESTO-202612_Report_24-HTIDS24_Smith-rev3.pptx"
@@ -185,7 +189,7 @@ def test_report_patents_table_records_match_expected():
             "Type (Issued, Filing)": "Issued",
             "Name": "Art of transmitting electrical energy through the natural mediums",
             "Patent or License Number": "US787412A",
-            "Date": "1900-05-16",
+            "Date": date(1900, 5, 16),
             "Resource Link (e.g., Google Patents Link)": "https://patents.google.com/patent/US787412A/",
         }
     ]
@@ -257,3 +261,107 @@ def test_report_performance_period():
     report = Report(test_report_file)
     # 2x6 metadata table on the Project Summary slide, cell (0, 5)
     assert report.performance_period == "MM/DD/YY – MM/DD/YY"
+
+
+# --------------------------------------------------------------------------- #
+# extract_summary_fields
+#
+# Sole owner of the Summary-slide label -> field mapping (SUMMARY_FIELD_SPEC),
+# shared by Report._process_summary and util.find_latest_report_pptx.
+# --------------------------------------------------------------------------- #
+def test_extract_summary_fields_real_report_matches_template():
+    report = Report(test_report_file)
+
+    assert extract_summary_fields(report.summary) == {
+        "project_id": "24-HTIDS24-0009",
+        "principal_investigator": "Jane Smith",
+        "email": "Jane.smith@fakeemail.org",
+        "affiliation": "NASA Goddard Space Flight Center",
+        "research_regime": "heliosphere",
+        "proposal_title": "A project to develop a new x-ray detector",
+        # U+2013 EN DASH, not a hyphen -- verified against the template deck
+        "hesto_taxonomy": "Photons \u2013 X-rays",
+        "technology_keyword": "Quantum Sensing",
+        "techport_url": "https://techport.nasa.gov/projects/95780",
+        "technology_name": "AWESOME",
+        "instrument_types": "Spectrometer",
+        "project_summary": (
+            "This is a project to develop a new x-ray detector. "
+            "This is the second sentence. This is the third sentence."
+        ),
+    }
+
+
+@pytest.mark.parametrize("bad_summary", [None, {}, "not a dict", 42, []])
+def test_extract_summary_fields_never_raises_and_returns_all_none(bad_summary):
+    # Batch-parser rule: one malformed deck must not stop the batch.
+    fields = extract_summary_fields(bad_summary)
+    assert set(fields) == set(SUMMARY_FIELD_SPEC)
+    assert all(value is None for value in fields.values())
+
+
+def test_extract_summary_fields_prefix_tolerates_trimmed_parentheticals():
+    # A PI who trims the trailing instruction -- "Technology Name (Acronym)"
+    # -> "Technology Name" -- must still match. This is the shape test_util.py's
+    # mock fixture actually uses.
+    fields = extract_summary_fields(
+        {
+            "technology name": "TestTech",
+            "instrument type": "Imager",
+            "project summary": "Test summary",
+        }
+    )
+    assert fields["technology_name"] == "TestTech"
+    assert fields["instrument_types"] == "Imager"
+    assert fields["project_summary"] == "Test summary"
+
+
+def test_extract_summary_fields_prefix_does_not_cross_match_technology_labels():
+    # "technology keyword" must not be captured by the "technology name" prefix.
+    fields = extract_summary_fields({"technology keyword": "Quantum Sensing"})
+    assert fields["technology_keyword"] == "Quantum Sensing"
+    assert fields["technology_name"] is None
+
+
+def test_extract_summary_fields_blank_or_non_string_values_are_none():
+    fields = extract_summary_fields(
+        {
+            "proposal title": "   ",  # blank -> None
+            "pi email": None,  # missing value -> None
+            "techport url": 12345,  # non-string (e.g. JSON cache) -> None
+            "hesto taxonomy": "  Photons \u2013 X-rays  ",  # stripped
+        }
+    )
+    assert fields["proposal_title"] is None
+    assert fields["email"] is None
+    assert fields["techport_url"] is None
+    assert fields["hesto_taxonomy"] == "Photons \u2013 X-rays"
+
+
+def test_summary_field_spec_modes_and_labels_are_well_formed():
+    # Labels are compared against parse_summary_slide's already-lowercased keys.
+    for _, (how, label) in SUMMARY_FIELD_SPEC.items():
+        assert how in {"exact", "prefix"}
+        assert label == label.lower()
+
+
+def test_report_summary_attributes_survive_extractor_refactor():
+    # Only project_id / principal_investigator are stored on Report (read by
+    # __repr__ and get_accomodation_data); they keep their legacy "" semantics.
+    report = Report(test_report_file)
+    assert report.project_id == "24-HTIDS24-0009"
+    assert report.principal_investigator == "Jane Smith"
+
+
+def test_report_no_longer_stores_redundant_summary_attributes():
+    # email / affiliation / research_regime were removed: the summary dict is the
+    # single source, read through extract_summary_fields.
+    report = Report(test_report_file)
+
+    for attribute in ["email", "affiliation", "research_regime"]:
+        assert not hasattr(report, attribute), f"{attribute} should be removed"
+
+    fields = extract_summary_fields(report.summary)
+    assert fields["email"] == "Jane.smith@fakeemail.org"
+    assert fields["affiliation"] == "NASA Goddard Space Flight Center"
+    assert fields["research_regime"] == "heliosphere"
