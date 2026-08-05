@@ -354,7 +354,7 @@ class Report:
                         self.student_metrics_table = pd.concat(
                             [self.student_metrics_table, new_df], ignore_index=True
                         )
-            if "trl" in this_slide_title:
+            if "trl" in this_slide_title and self.trl_status_table is None:
                 self.trl_status_table = self.parse_trl_status_slide(this_slide)
             if "Project Summary".lower() in this_slide_title:
                 self.project_status = self.parse_status_slide(this_slide)
